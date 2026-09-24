@@ -1,0 +1,57 @@
+# SAAM Phase 4 Stage 1.5 — Event Schema
+event: order.placed
+version: "1.0.0"
+description: >
+  Emitted by the order service on a successful checkout commit (charge -> persist -> publish).
+  Intended for downstream capabilities — notifications, analytics, fulfillment. Cart teardown is
+  NOT driven by this event; it is a direct DELETE performed by the order service (BR-ORD-025).
+
+publisher: MS-09 order
+triggered_by:
+  - BR-ORD-008   # order placement orchestration — process sequence (checkout saga step)
+  - BR-ORD-025   # checkout finalize — order persisted, cart consumed, notifications sent
+
+consumers: []   # NONE among the 11 in-scope services — see index.md dead-event note.
+
+channel: order.placed
+delivery:
+  guarantees: at-least-once
+  ordering: by orderId
+  note: downstream consumers must be idempotent on orderId.
+
+payload:
+  type: object
+  required: [orderId, storeId, total, currency, status, timestamp]
+  properties:
+    orderId:
+      type: string
+    storeId:
+      type: string
+    customerId:
+      type: string
+    total:
+      type: number
+      format: double
+      description: The owned order grand total (INV-ORD-002).
+    currency:
+      type: string
+    status:
+      type: string
+      enum: [Ordered, Processed, Delivered, Refunded]
+      description: Initial status at placement (typically Ordered).
+    hasDownloads:
+      type: boolean
+      description: Whether the order has downloadable (digital) products.
+    timestamp:
+      type: string
+      format: date-time
+
+example:
+  orderId: "ORD-5001"
+  storeId: "STORE-1"
+  customerId: "CUST-9"
+  total: 130.38
+  currency: "USD"
+  status: "Ordered"
+  hasDownloads: true
+  timestamp: "2026-01-01T12:00:00Z"

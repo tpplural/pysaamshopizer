@@ -1,0 +1,493 @@
+openapi: "3.1.0"
+info:
+  title: reference-data API
+  version: "1.0.0"
+  description: |
+    API contract for reference-data (MS-01).
+    Generated from the SAAM specification (Phase 4, Direct Source extraction of Shopizer 2.0.1).
+    SINGLE SOURCE OF TRUTH for field names, paths, and response shapes.
+    Both test suites and code generators MUST reference this file.
+    reference-data is a read-only leaf provider: countries, zones, currencies, languages.
+
+servers:
+  - url: http://localhost:{port}/api/v1/reference
+    variables:
+      port:
+        default: "8001"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+# Concern B — documented header exception (global kernel, ADR-006):
+# reference-data is NOT tenant/store-scoped. It intentionally does NOT carry
+# x-tenant-id / x-store-id. Only x-correlation-id (+ optional auth) applies.
+# Country/zone/language/currency are global reference data shared across all tenants.
+x-global-headers:
+  - name: x-correlation-id
+    required: false
+    description: "Distributed tracing correlation id (reference data is global, not tenant-scoped)"
+    testValue: "test-corr-001"
+
+paths:
+  /countries:
+    get:
+      operationId: listCountries
+      summary: List countries for a language, name-sorted; optional subset filter and map form
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: language
+          in: query
+          required: true
+          schema: { type: string }
+          description: Language code the country names are localized to (e.g. en)
+        - name: iso_codes
+          in: query
+          required: false
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: false
+          description: Optional subset of ISO codes to filter to (BR-REF-LST-005)
+        - name: as
+          in: query
+          required: false
+          schema: { type: string, enum: [List, Map], default: List }
+          description: List (default) or Map keyed by ISO code (BR-REF-LST-004)
+      responses:
+        "200":
+          description: Success (fail-soft — empty items on lookup failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CountryListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /countries/{isoCode}:
+    get:
+      operationId: getCountry
+      summary: Resolve a country by ISO code
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: isoCode
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The country
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Country"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /countries/{isoCode}/name:
+    get:
+      operationId: getCountryName
+      summary: Localized country display name; echoes the code if unresolved
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: isoCode
+          in: path
+          required: true
+          schema: { type: string }
+        - name: language
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The localized name, or the input code if it could not be resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NameResponse"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /countries/{isoCode}/zones:
+    get:
+      operationId: listCountryZones
+      summary: List a country's zones for a language, name-sorted
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: isoCode
+          in: path
+          required: true
+          schema: { type: string }
+        - name: language
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success (fail-soft — empty items if none/unresolved)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /zones/{code}:
+    get:
+      operationId: getZone
+      summary: Resolve a zone by code
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Zone"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /zones/{code}/name:
+    get:
+      operationId: getZoneName
+      summary: Localized zone display name; echoes the code if unresolved
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+        - name: language
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The localized name, or the input code if unresolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NameResponse"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /provinces:
+    post:
+      operationId: getProvinces
+      summary: Address-form province lookup (country + optional language -> zones), fail-soft
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProvincesRequest"
+      responses:
+        "200":
+          description: Fail-soft — SUCCESS with items, or FAILURE with empty items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvincesResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /currencies:
+    get:
+      operationId: listCurrencies
+      summary: List all currencies, code-sorted
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrencyListResponse"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /currencies/{code}:
+    get:
+      operationId: getCurrency
+      summary: Resolve a currency by code
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The currency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Currency"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /languages:
+    get:
+      operationId: listLanguages
+      summary: List all configured languages
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LanguageListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /languages/{code}:
+    get:
+      operationId: getLanguage
+      summary: Resolve a language by code
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The language
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Language"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /languages/resolve:
+    get:
+      operationId: resolveLanguage
+      summary: Map a locale/Accept-Language to a configured language (204 if none matches)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: locale
+          in: query
+          required: true
+          schema: { type: string }
+          description: A locale or language tag (e.g. en_US, fr-CA)
+      responses:
+        "200":
+          description: The matched language
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Language"
+        "204":
+          description: No configured language matched the locale
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /credit-card-years:
+    get:
+      operationId: listCreditCardYears
+      summary: Rolling 10-year card-expiry list (current year .. +9), cached
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "200":
+          description: Ten consecutive years as strings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StringListResponse"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /months-of-year:
+    get:
+      operationId: listMonthsOfYear
+      summary: Months of the year as two-digit strings, cached
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "200":
+          description: The twelve months "01".."12"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StringListResponse"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+components:
+  schemas:
+    Country:
+      type: object
+      required: [iso_code, supported]
+      properties:
+        iso_code:
+          type: string
+          description: ISO country code (BR-REF-RES-001)
+        supported:
+          type: boolean
+        name:
+          type: string
+          description: Localized display name (set when requested with a language)
+
+    CountryListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Country"
+
+    Zone:
+      type: object
+      required: [code, country_iso_code]
+      properties:
+        code:
+          type: string
+          description: Globally-unique zone code (BR-REF-RES-004)
+        country_iso_code:
+          type: string
+          description: ISO code of the country this zone belongs to (INV-REF-004)
+        id:
+          type: integer
+          format: int64
+          description: Surrogate id (returned for the province dropdown, BR-REF-API-001)
+        name:
+          type: string
+          description: Localized display name
+
+    ZoneListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Zone"
+
+    Currency:
+      type: object
+      required: [code, name, supported]
+      properties:
+        code:
+          type: string
+          description: ISO-4217 currency code (BR-REF-RES-003)
+        name:
+          type: string
+          description: Display name (target stores the real name; legacy stored the code — NF-2)
+        supported:
+          type: boolean
+
+    CurrencyListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Currency"
+
+    Language:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: Language code, e.g. en/fr (BR-REF-RES-002)
+        sort_order:
+          type: [integer, "null"]
+          description: Display order (unset at seed in legacy — NF-4)
+
+    LanguageListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Language"
+
+    ProvincesRequest:
+      type: object
+      required: [country_code]
+      properties:
+        country_code:
+          type: string
+          description: ISO code of the country whose provinces/zones are requested
+        lang:
+          type: string
+          description: Optional language code; falls back to ambient then English (BR-REF-LNG-003)
+
+    ProvinceEntry:
+      type: object
+      required: [name, code, id]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        id:
+          type: integer
+          format: int64
+
+    ProvincesResponse:
+      # KEEP domain-specific fail-soft envelope {status, items} (BR-REF-API-001) — not a plain list wrapper.
+      type: object
+      required: [status, items]
+      properties:
+        status:
+          type: string
+          enum: [Success, Failure]
+          description: Fail-soft status (BR-REF-API-001)
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProvinceEntry"
+
+    NameResponse:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          description: Localized name, or the echoed input code if unresolved (BR-REF-API-002)
+
+    StringListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: string

@@ -1,0 +1,1473 @@
+openapi: "3.1.0"
+info:
+  title: Catalog Service API
+  version: "1.0.0"
+  description: |
+    API contract for the catalog microservice (MS-04) of the Shopizer modernization.
+    SINGLE SOURCE OF TRUTH for field names, paths, status codes, and response shapes.
+    Both test suites and code generators MUST reference this file.
+
+servers:
+  - url: http://localhost:{port}/api/v1/catalog
+    variables:
+      port:
+        default: "8004"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+# Concern B — documented exception: catalog uses x-tenant-id ONLY (store == tenant); no separate
+# x-store-id. Store scoping is folded into the tenant header for this domain.
+x-global-headers:
+  - name: x-tenant-id
+    required: true
+    description: "Store isolation — all catalog queries are scoped to this store/tenant (store == tenant)"
+    testValue: "test-tenant-001"
+  - name: x-correlation-id
+    required: false
+    description: "Distributed tracing correlation id"
+    testValue: "test-corr-001"
+
+paths:
+  /products:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listProducts
+      summary: List store products
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductListResponse" }
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: createProduct
+      summary: Create a product aggregate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProductRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /products/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getProduct
+      summary: Get a product by id
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    put:
+      operationId: updateProduct
+      summary: Update a product and reconcile children
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProductRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+    delete:
+      operationId: deleteProduct
+      summary: Delete a product and cascade dependents
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /products/{id}/descriptions:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: addProductDescription
+      summary: Add a localized product description
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DescriptionRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Description" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /products/{id}/availabilities:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: addAvailability
+      summary: Add an availability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAvailabilityRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Availability" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/availabilities/{availabilityId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: availabilityId, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateAvailability
+      summary: Update an availability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAvailabilityRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Availability" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/digital-file:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getDigitalFile
+      summary: Get the product's downloadable file
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DigitalFile" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: attachDigitalFile
+      summary: Attach a downloadable file and mark the product virtual
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttachDigitalFileRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DigitalFile" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+    delete:
+      operationId: removeDigitalFile
+      summary: Remove the downloadable file
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DigitalFile" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/relationships:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: createRelationship
+      summary: Create a product relationship
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRelationshipRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Relationship" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/relationships/{relationshipId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: relationshipId, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateRelationship
+      summary: Update a relationship
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRelationshipRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Relationship" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /storefront/products/{seUrl}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: seUrl, in: path, required: true, schema: { type: string } }
+      - { name: language_code, in: query, schema: { type: string } }
+      - { name: region, in: query, schema: { type: string } }
+    get:
+      operationId: getStorefrontProduct
+      summary: Storefront product read (visibility-gated, locale-trimmed)
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /storefront/categories/{categoryId}/products:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: categoryId, in: path, required: true, schema: { type: string } }
+      - { name: language_code, in: query, schema: { type: string } }
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+    get:
+      operationId: listCategoryProducts
+      summary: List products across a category lineage
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductListResponse" }
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+
+  /product-types/{code}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: code, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getProductType
+      summary: Resolve a product type by code
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductType" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /relationship-groups:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listRelationshipGroups
+      summary: List relationship groups
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RelationshipGroupListResponse" }
+    post:
+      operationId: createRelationshipGroup
+      summary: Create a relationship group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRelationshipGroupRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RelationshipGroup" }
+
+  /relationship-groups/{code}/activate:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: code, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: activateRelationshipGroup
+      summary: Activate a group
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RelationshipGroup" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /relationship-groups/{code}/deactivate:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: code, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: deactivateRelationshipGroup
+      summary: Deactivate a group
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RelationshipGroup" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /relationship-groups/{code}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: code, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: deleteRelationshipGroup
+      summary: Delete a group
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /categories:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCategories
+      summary: List categories
+      parameters:
+        - { name: language_code, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryListResponse" }
+    post:
+      operationId: createCategory
+      summary: Create a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCategoryRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /categories/code-available:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: checkCategoryCode
+      summary: Check category code uniqueness
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodeAvailability" }
+
+  /categories/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateCategory
+      summary: Update a category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCategoryRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    delete:
+      operationId: deleteCategory
+      summary: Delete a category subtree and reconcile products
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /categories/{id}/move:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: moveCategory
+      summary: Reparent a category and its subtree
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MoveCategoryRequest" }
+      responses:
+        "200":
+          description: Moved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /manufacturers:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listManufacturers
+      summary: List manufacturers
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ManufacturerListResponse" }
+    post:
+      operationId: createManufacturer
+      summary: Create a manufacturer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateManufacturerRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Manufacturer" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /manufacturers/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateManufacturer
+      summary: Update a manufacturer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateManufacturerRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Manufacturer" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    delete:
+      operationId: deleteManufacturer
+      summary: Delete a manufacturer (blocked if products reference it)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+
+  /manufacturers/{id}/image:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: uploadManufacturerImage
+      summary: Upload and validate a manufacturer image
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageUploadRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageRef" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /options:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listOptions
+      summary: List options (store-scoped)
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionListResponse" }
+    post:
+      operationId: createOption
+      summary: Create an option
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOptionRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Option" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /options/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateOption
+      summary: Update an option
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOptionRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Option" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+    delete:
+      operationId: deleteOption
+      summary: Delete an option (cascade its attributes)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /options/{id}/type:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getOptionType
+      summary: Get an option's value-widget type
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionType" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /option-values:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listOptionValues
+      summary: List option values (store-scoped)
+      parameters:
+        - { name: include_display_only, in: query, schema: { type: boolean, default: false } }
+        - { name: language_code, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionValueListResponse" }
+    post:
+      operationId: createOptionValue
+      summary: Create an option value
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOptionValueRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionValue" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /option-values/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateOptionValue
+      summary: Update an option value
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOptionValueRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptionValue" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    delete:
+      operationId: deleteOptionValue
+      summary: Delete an option value (cascade its attributes)
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/attributes:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: language_code, in: query, schema: { type: string } }
+    get:
+      operationId: listProductAttributes
+      summary: List a product's attributes (language-preferred descriptions)
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttributeListResponse" }
+    post:
+      operationId: createProductAttribute
+      summary: Bind an option/value to a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAttributeRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Attribute" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /products/{id}/attributes/{attributeId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: attributeId, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateProductAttribute
+      summary: Update an attribute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAttributeRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Attribute" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    delete:
+      operationId: deleteProductAttribute
+      summary: Delete an attribute
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/prices:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listProductPrices
+      summary: List a product's prices (admin, with discount indicator)
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceListResponse" }
+    post:
+      operationId: createProductPrice
+      summary: Create a price
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePriceRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Price" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /products/{id}/prices/{priceId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: priceId, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateProductPrice
+      summary: Update a price
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePriceRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Price" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+    delete:
+      operationId: deleteProductPrice
+      summary: Delete a price
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/final-price:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getFinalPrice
+      summary: Compute the final price with default attributes
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FinalPrice" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    post:
+      operationId: getFinalPriceForAttributes
+      summary: Compute the final price for selected attributes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FinalPriceRequest" }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FinalPrice" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/images:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listProductImages
+      summary: List product images (display paths)
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageListResponse" }
+    post:
+      operationId: uploadProductImages
+      summary: Upload product images (non-default)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadImagesRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageUploadResult" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /products/{id}/images/{imageId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: imageId, in: path, required: true, schema: { type: string } }
+      - { name: size, in: query, schema: { $ref: "#/components/schemas/ImageSize" } }
+    get:
+      operationId: getProductImage
+      summary: Get a sized image variant
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageRef" }
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    put:
+      operationId: updateProductImage
+      summary: Update image metadata/descriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateImageRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Image" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+    delete:
+      operationId: deleteProductImage
+      summary: Remove an image (file and record)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+  /products/{id}/reviews:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: language_code, in: query, schema: { type: string } }
+    get:
+      operationId: listProductReviews
+      summary: List reviews for a product
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewListResponse" }
+    post:
+      operationId: submitProductReview
+      summary: Submit a customer review (one per customer)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateReviewRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+
+  /products/{id}/reviews/{reviewId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: reviewId, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: deleteProductReview
+      summary: Delete a review (admin; does not recompute aggregate)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+
+components:
+  schemas:
+    ImageSize:
+      type: string
+      enum: [Large, Small, Original]
+
+    PriceType:
+      type: string
+      enum: [OneTime, Monthly]
+
+    OptionWidgetType:
+      type: string
+      enum: [Text, Radio, Select, Checkbox]
+
+    Description:
+      type: object
+      required: [language_code, name]
+      properties:
+        id: { type: string }
+        language_code: { type: string }
+        name: { type: string }
+        description: { type: string }
+
+    DescriptionRequest:
+      type: object
+      required: [language_code, name]
+      properties:
+        language_code: { type: string }
+        name: { type: string }
+        description: { type: string }
+
+    Availability:
+      type: object
+      properties:
+        id: { type: string }
+        region: { type: string }
+        active: { type: boolean }
+        quantity: { type: integer }
+        order_min: { type: integer }
+        order_max: { type: integer }
+
+    CreateAvailabilityRequest:
+      type: object
+      properties:
+        region: { type: string, default: "*" }
+        quantity: { type: integer, default: 0 }
+        order_min: { type: integer, default: 0 }
+        order_max: { type: integer, default: 0 }
+
+    UpdateAvailabilityRequest:
+      type: object
+      properties:
+        quantity: { type: integer }
+        order_min: { type: integer }
+        order_max: { type: integer }
+        active: { type: boolean }
+
+    Price:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string }
+        default_price: { type: boolean }
+        price_type: { $ref: "#/components/schemas/PriceType" }
+        amount: { type: number, format: double }
+        special_amount: { type: number, format: double }
+        special_start_date: { type: string, format: date-time }
+        special_end_date: { type: string, format: date-time }
+        has_discount: { type: boolean }
+
+    CreatePriceRequest:
+      type: object
+      required: [amount]
+      properties:
+        code: { type: string, default: "base" }
+        default_price: { type: boolean, default: false }
+        price_type: { $ref: "#/components/schemas/PriceType" }
+        amount: { type: string }
+        special_amount: { type: string }
+        special_start_date: { type: string }
+        special_end_date: { type: string }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+
+    PriceListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Price" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    FinalPrice:
+      type: object
+      properties:
+        final_price: { type: number, format: double }
+        original_price: { type: number, format: double }
+        discounted_price: { type: number, format: double }
+        default_price: { type: boolean }
+        discounted: { type: boolean }
+        discount_percent: { type: integer }
+        discount_end_date: { type: string, format: date-time }
+
+    FinalPriceRequest:
+      type: object
+      properties:
+        selected_attribute_ids:
+          type: array
+          items: { type: string }
+
+    DigitalFile:
+      type: object
+      properties:
+        product_id: { type: string }
+        file_name: { type: string }
+        virtual: { type: boolean }
+
+    AttachDigitalFileRequest:
+      type: object
+      required: [file_name, content]
+      properties:
+        file_name: { type: string }
+        content: { type: string }
+
+    Relationship:
+      type: object
+      properties:
+        id: { type: string }
+        group_code: { type: string }
+        related_product_id: { type: string }
+        active: { type: boolean }
+
+    CreateRelationshipRequest:
+      type: object
+      required: [group_code]
+      properties:
+        group_code: { type: string }
+        related_product_id: { type: string }
+        active: { type: boolean, default: true }
+
+    RelationshipGroup:
+      type: object
+      properties:
+        code: { type: string }
+        active: { type: boolean }
+
+    CreateRelationshipGroupRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+
+    RelationshipGroupListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RelationshipGroup" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    ProductType:
+      type: object
+      properties:
+        code: { type: string }
+        allow_add_to_cart: { type: boolean }
+
+    Product:
+      type: object
+      required: [id, sku]
+      properties:
+        id: { type: string }
+        sku: { type: string }
+        available: { type: boolean }
+        date_available: { type: string, format: date-time }
+        visible: { type: boolean }
+        virtual: { type: boolean }
+        shippable: { type: boolean }
+        free: { type: boolean }
+        sort_order: { type: integer }
+        manufacturer_id: { type: string }
+        type_code: { type: string }
+        product_review_avg: { type: number, format: double }
+        product_review_count: { type: integer }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Description" }
+        availabilities:
+          type: array
+          items: { $ref: "#/components/schemas/Availability" }
+
+    CreateProductRequest:
+      type: object
+      required: [sku, availabilities]
+      properties:
+        sku: { type: string }
+        type_code: { type: string }
+        manufacturer_id: { type: string }
+        available: { type: boolean, default: true }
+        price: { type: string }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+        availabilities:
+          type: array
+          items: { $ref: "#/components/schemas/CreateAvailabilityRequest" }
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        sku: { type: string }
+        type_code: { type: string }
+        manufacturer_id: { type: string }
+        available: { type: boolean }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+        availabilities:
+          type: array
+          items: { $ref: "#/components/schemas/Availability" }
+
+    ProductListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    Category:
+      type: object
+      required: [id, code]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        parent_id: { type: string }
+        depth: { type: integer }
+        lineage: { type: string }
+        sort_order: { type: integer }
+        visible: { type: boolean }
+        descendants_updated: { type: integer }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Description" }
+
+    CreateCategoryRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+        parent_id: { type: integer }
+        sort_order: { type: integer, default: 0 }
+        visible: { type: boolean, default: true }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+
+    MoveCategoryRequest:
+      type: object
+      required: [parent_id]
+      properties:
+        parent_id: { type: integer }
+
+    CategoryListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Category" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    CodeAvailability:
+      type: object
+      properties:
+        available: { type: boolean }
+        reason: { type: string }
+
+    Manufacturer:
+      type: object
+      required: [id, code]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        sort_order: { type: integer }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Description" }
+
+    CreateManufacturerRequest:
+      type: object
+      required: [code, descriptions]
+      properties:
+        code: { type: string }
+        sort_order: { type: integer, default: 0 }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+
+    ManufacturerListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Manufacturer" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    Option:
+      type: object
+      required: [id, code]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        type: { $ref: "#/components/schemas/OptionWidgetType" }
+        read_only: { type: boolean }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Description" }
+
+    CreateOptionRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+        type: { $ref: "#/components/schemas/OptionWidgetType" }
+        read_only: { type: boolean, default: false }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+
+    OptionType:
+      type: object
+      properties:
+        type: { $ref: "#/components/schemas/OptionWidgetType" }
+
+    OptionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Option" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    OptionValue:
+      type: object
+      required: [id, code]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        display_only: { type: boolean }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Description" }
+
+    CreateOptionValueRequest:
+      type: object
+      required: [code, descriptions]
+      properties:
+        code: { type: string }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+
+    OptionValueListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OptionValue" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    Attribute:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        option_id: { type: string }
+        option_value_id: { type: string }
+        price: { type: number, format: double }
+        additional_weight: { type: number, format: double }
+        sort_order: { type: integer }
+        default: { type: boolean }
+        required: { type: boolean }
+        display_only: { type: boolean }
+        discounted: { type: boolean }
+        free: { type: boolean }
+
+    CreateAttributeRequest:
+      type: object
+      required: [option_id]
+      properties:
+        option_id: { type: string }
+        option_value_id: { type: string }
+        text_value: { type: string }
+        price: { type: string }
+        additional_weight: { type: string }
+        sort_order: { type: string }
+        default: { type: boolean, default: false }
+        required: { type: boolean, default: false }
+
+    AttributeListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              attribute_id: { type: string }
+              attribute: { type: string }
+              value: { type: string }
+              display: { type: boolean }
+              order: { type: integer }
+              price: { type: string }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    Image:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        file_name: { type: string }
+        default_image: { type: boolean }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/Description" }
+
+    ImageRef:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+
+    ImageListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ImageRef" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    UploadImagesRequest:
+      type: object
+      required: [images]
+      properties:
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              content: { type: string }
+              file_name: { type: string }
+
+    ImageUploadRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string }
+        file_name: { type: string }
+
+    UpdateImageRequest:
+      type: object
+      properties:
+        default_image: { type: boolean }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/DescriptionRequest" }
+
+    ImageUploadResult:
+      type: object
+      properties:
+        uploaded: { type: integer }
+
+    Review:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        rating: { type: integer }
+        description: { type: string }
+        date: { type: string, format: date }
+        product_review_avg: { type: number, format: double }
+        product_review_count: { type: integer }
+
+    CreateReviewRequest:
+      type: object
+      required: [rating, description]
+      properties:
+        rating: { type: integer }
+        description: { type: string }
+
+    ReviewListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Review" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+

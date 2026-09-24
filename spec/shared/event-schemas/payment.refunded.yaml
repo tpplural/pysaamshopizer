@@ -1,0 +1,56 @@
+# SAAM Phase 4 Stage 1.5 — Event Schema
+event: payment.refunded
+version: "1.0.0"
+description: >
+  Emitted by the payment service when a refund is recorded against an order. The order service
+  consumes it to append a refund total line, decrement the order total, and set the order Refunded.
+  Money-safety seam BV-2 / ADR-003: payment never writes the order directly.
+
+publisher: MS-10 payment
+triggered_by:
+  - BR-PAY-015   # refund event — order-total decrement and refund line (consumed by order service)
+
+consumers:
+  - service: MS-09 order
+    action: >
+      Load the order; require cumulative refunds + amount <= order.total (INV-ORD-005); append a
+      refund OrderTotal line (module="refund"); decrement the order total; set status Refunded and
+      append a status-history entry (BR-ORD-010).
+    idempotency: dedupe on transactionId (INV-ORD-007); at-least-once delivery tolerated.
+
+channel: payment.refunded
+delivery:
+  guarantees: at-least-once
+  ordering: by orderId
+
+payload:
+  type: object
+  required: [transactionId, orderId, amount, currency, transactionType, timestamp]
+  properties:
+    transactionId:
+      type: string
+      description: Ledger transaction id — the idempotency key for MS-09's consumer (INV-ORD-007).
+    orderId:
+      type: string
+      description: The order being refunded.
+    amount:
+      type: number
+      format: double
+      description: Refunded amount (store currency). May be partial (no PARTIALLY_REFUNDED state — flagged, Layer A).
+    currency:
+      type: string
+    transactionType:
+      type: string
+      enum: [Refund]
+      description: Always "Refund".
+    timestamp:
+      type: string
+      format: date-time
+
+example:
+  transactionId: "TX-9004"
+  orderId: "ORD-5001"
+  amount: 50.00
+  currency: "USD"
+  transactionType: "Refund"
+  timestamp: "2026-01-01T12:05:00Z"

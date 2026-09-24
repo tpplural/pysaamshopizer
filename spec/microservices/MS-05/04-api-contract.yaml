@@ -1,0 +1,692 @@
+openapi: "3.1.0"
+info:
+  title: Customer Service API
+  version: "1.0.0"
+  description: |
+    API contract for MS-05 customer service (Shopizer modernization).
+    SINGLE SOURCE OF TRUTH for field names, paths, and response shapes.
+    Both test suites and code generators MUST reference this file.
+
+servers:
+  - url: http://localhost:{port}/api/v1
+    variables:
+      port:
+        default: "8005"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+x-global-headers:
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this tenant"
+    testValue: "test-tenant-001"
+  - name: x-store-id
+    required: true
+    description: "Store-level isolation within a tenant"
+    testValue: "test-store-001"
+
+paths:
+  /customers:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomers
+      summary: List shoppers in the store
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerListResponse" } } } }
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: createCustomer
+      summary: Create a shopper
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCustomerRequest" } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } } }
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/lookup:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: lookupCustomerByUserName
+      summary: Resolve a shopper by username within the store
+      parameters:
+        - { name: user_name, in: query, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/registration:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    post:
+      operationId: registerCustomer
+      summary: Self-service shopper registration
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RegisterCustomerRequest" } } }
+      responses:
+        "201": { description: Registered, content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } } }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/login:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    post:
+      operationId: loginCustomer
+      summary: Authenticate a shopper and merge session cart
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LoginRequest" } } }
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/LoginResponse" } } } }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: getCustomer
+      summary: Get a shopper
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: updateCustomer
+      summary: Update a shopper
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateCustomerRequest" } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    delete:
+      operationId: deleteCustomer
+      summary: Delete a shopper (cascades attributes)
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/password:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    post:
+      operationId: changeCustomerPassword
+      summary: Change own password
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ChangePasswordRequest" } } }
+      responses:
+        "200": { description: Changed, content: { application/json: { schema: { $ref: "#/components/schemas/StatusResponse" } } } }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/password-reset:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    post:
+      operationId: resetCustomerPassword
+      summary: Administrative password reset
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Reset, content: { application/json: { schema: { $ref: "#/components/schemas/StatusResponse" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/addresses/billing:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: getBillingAddress
+      summary: Get billing address
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/Address" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: updateBillingAddress
+      summary: Update billing address
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Address" } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Address" } } } }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/addresses/delivery:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: getDeliveryAddress
+      summary: Get delivery address
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/Address" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: updateDeliveryAddress
+      summary: Update delivery address
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Address" } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Address" } } } }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/groups:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomerGroups
+      summary: List a shopper's groups
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/GroupListResponse" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: addCustomerGroup
+      summary: Add a group membership
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AddGroupRequest" } } }
+      responses:
+        "200": { description: Added, content: { application/json: { schema: { $ref: "#/components/schemas/GroupListResponse" } } } }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/groups/{groupId}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    delete:
+      operationId: removeCustomerGroup
+      summary: Remove a group membership
+      parameters:
+        - { $ref: "#/components/parameters/IdPath" }
+        - { name: groupId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/attributes:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomerAttributes
+      summary: List a shopper's attributes
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerAttributeListResponse" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: replaceCustomerAttributes
+      summary: Reconcile a shopper's attributes
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReplaceAttributesRequest" } } }
+      responses:
+        "200": { description: Reconciled, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerAttributeListResponse" } } } }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customers/{id}/available-options:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomerAvailableOptions
+      summary: Options visible to the shopper with current selections
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/AvailableOptionListResponse" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customer-options:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomerOptions
+      summary: List customer options
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOptionListResponse" } } } }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: createCustomerOption
+      summary: Create a customer option
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCustomerOptionRequest" } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOption" } } } }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customer-options/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: getCustomerOption
+      summary: Get a customer option
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOption" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: updateCustomerOption
+      summary: Update a customer option
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCustomerOptionRequest" } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOption" } } } }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    delete:
+      operationId: deleteCustomerOption
+      summary: Delete a customer option (cascade)
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customer-option-values:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomerOptionValues
+      summary: List customer option values
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOptionValueListResponse" } } } }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: createCustomerOptionValue
+      summary: Create a customer option value
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCustomerOptionValueRequest" } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOptionValue" } } } }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customer-option-values/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    delete:
+      operationId: deleteCustomerOptionValue
+      summary: Delete a customer option value (cascade)
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /customer-option-sets:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+    get:
+      operationId: listCustomerOptionSets
+      summary: List (option,value) bindings
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200": { description: Success, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOptionSetListResponse" } } } }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: createCustomerOptionSet
+      summary: Create an (option,value) binding
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCustomerOptionSetRequest" } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/CustomerOptionSet" } } } }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+components:
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    Gender:
+      type: string
+      enum: [M, F]
+
+    OptionType:
+      type: string
+      enum: [Text, Radio, Select, Checkbox]
+
+    Address:
+      type: object
+      properties:
+        first_name: { type: string }
+        last_name: { type: string }
+        company: { type: string }
+        address: { type: string }
+        city: { type: string }
+        postal_code: { type: string }
+        state: { type: string }
+        telephone: { type: string }
+        country: { type: string }
+        zone: { type: string }
+        billing_address: { type: boolean }
+
+    Customer:
+      type: object
+      required: [id, store_id, email_address]
+      properties:
+        id: { type: string, format: uuid }
+        store_id: { type: string, format: uuid }
+        user_name: { type: string }
+        email_address: { type: string }
+        anonymous: { type: boolean }
+        gender: { $ref: "#/components/schemas/Gender" }
+        date_of_birth: { type: string, format: date-time }
+        company: { type: string }
+        language: { type: string }
+        billing: { $ref: "#/components/schemas/Address" }
+        delivery: { $ref: "#/components/schemas/Address" }
+        groups: { type: array, items: { type: integer } }
+
+    CreateCustomerRequest:
+      type: object
+      required: [email_address]
+      properties:
+        user_name: { type: string }
+        email_address: { type: string }
+        password: { type: string }
+        gender: { $ref: "#/components/schemas/Gender" }
+        language: { type: string }
+        company: { type: string }
+        billing: { $ref: "#/components/schemas/Address" }
+        delivery: { $ref: "#/components/schemas/Address" }
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        email_address: { type: string }
+        gender: { $ref: "#/components/schemas/Gender" }
+        company: { type: string }
+        language: { type: string }
+        billing: { $ref: "#/components/schemas/Address" }
+        delivery: { $ref: "#/components/schemas/Address" }
+
+    RegisterCustomerRequest:
+      type: object
+      required: [user_name, password, check_password, email_address]
+      properties:
+        user_name: { type: string }
+        password: { type: string }
+        check_password: { type: string }
+        email_address: { type: string }
+        gender: { $ref: "#/components/schemas/Gender" }
+        language: { type: string }
+        billing: { $ref: "#/components/schemas/Address" }
+        delivery: { $ref: "#/components/schemas/Address" }
+        captcha_challenge: { type: string }
+        captcha_response: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [user_name, password]
+      properties:
+        user_name: { type: string }
+        password: { type: string }
+        session_cart_code: { type: string }
+
+    LoginResponse:
+      type: object
+      properties:
+        status: { type: string }
+        authenticated: { type: boolean }
+        cart_code: { type: string }
+        authorities: { type: array, items: { type: string } }
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, password]
+      properties:
+        current_password: { type: string }
+        password: { type: string }
+
+    StatusResponse:
+      type: object
+      properties:
+        status: { type: string }
+
+    AddGroupRequest:
+      type: object
+      required: [group_id]
+      properties:
+        group_id: { type: integer }
+
+    GroupListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { type: integer } }
+
+    CustomerAttribute:
+      type: object
+      required: [option_id]
+      properties:
+        id: { type: string, format: uuid }
+        option_id: { type: string, format: uuid }
+        option_value_id: { type: string, format: uuid }
+        text_value: { type: string }
+
+    CustomerAttributeListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CustomerAttribute" } }
+
+    ReplaceAttributesRequest:
+      type: object
+      required: [attributes]
+      properties:
+        attributes: { type: array, items: { $ref: "#/components/schemas/CustomerAttribute" } }
+
+    AvailableOption:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        type: { $ref: "#/components/schemas/OptionType" }
+        name: { type: string }
+        active: { type: boolean }
+        public: { type: boolean }
+        selected_value_id: { type: string, format: uuid }
+        selected_text: { type: string }
+
+    AvailableOptionListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AvailableOption" } }
+
+    OptionDescription:
+      type: object
+      required: [language, name]
+      properties:
+        language: { type: string }
+        name: { type: string }
+
+    CustomerOption:
+      type: object
+      required: [id, code]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        type: { $ref: "#/components/schemas/OptionType" }
+        sort_order: { type: integer }
+        active: { type: boolean }
+        public: { type: boolean }
+        descriptions: { type: array, items: { $ref: "#/components/schemas/OptionDescription" } }
+
+    CreateCustomerOptionRequest:
+      type: object
+      required: [code, descriptions]
+      properties:
+        code: { type: string }
+        type: { $ref: "#/components/schemas/OptionType" }
+        sort_order: { type: integer }
+        active: { type: boolean }
+        public: { type: boolean }
+        descriptions: { type: array, items: { $ref: "#/components/schemas/OptionDescription" } }
+
+    CustomerOptionValue:
+      type: object
+      required: [id, code]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        sort_order: { type: integer }
+        image: { type: string }
+        descriptions: { type: array, items: { $ref: "#/components/schemas/OptionDescription" } }
+
+    CreateCustomerOptionValueRequest:
+      type: object
+      required: [code, descriptions]
+      properties:
+        code: { type: string }
+        sort_order: { type: integer }
+        image: { type: string }
+        descriptions: { type: array, items: { $ref: "#/components/schemas/OptionDescription" } }
+
+    CustomerOptionSet:
+      type: object
+      required: [id, option_id, option_value_id]
+      properties:
+        id: { type: string, format: uuid }
+        option_id: { type: string, format: uuid }
+        option_value_id: { type: string, format: uuid }
+        sort_order: { type: integer }
+
+    CreateCustomerOptionSetRequest:
+      type: object
+      required: [option_id, option_value_id]
+      properties:
+        option_id: { type: string, format: uuid }
+        option_value_id: { type: string, format: uuid }
+        sort_order: { type: integer }
+
+    CustomerListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Customer" } }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    CustomerOptionListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CustomerOption" } }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    CustomerOptionValueListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CustomerOptionValue" } }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+
+    CustomerOptionSetListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CustomerOptionSet" } }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }
+

@@ -1,0 +1,886 @@
+openapi: "3.1.0"
+info:
+  title: Shipping Service API
+  version: "1.0.0"
+  description: |
+    API contract for MS-08 shipping service (Shopizer 2.0.1 modernization).
+    Single source of truth for field names, paths, status codes, and response shapes.
+    Covers: quote pipeline, packaging, shipping configuration, free-shipping, price selection,
+    the custom weight-based provider (extension point), and admin authoring.
+
+    Shared-convention reconciliation (2026-09-19 human signal) applied: fields are snake_case
+    (Concern A); the tenant header, pagination, and error response reference
+    spec/shared/common-schemas.yaml (Concerns B/C/E); enum VALUES normalized from UPPER_CASE to
+    PascalCase to match the other 10 services (Concern G) — EXCEPT ShippingReturnCode, whose values
+    are external/legacy status codes (NO_SHIPPING_TO_SELECTED_COUNTRY, etc.) and stay UPPER_CASE.
+
+    Header exception (Concern B): shipping is store-scoped but store scoping is FOLDED INTO the
+    tenant header — TenantHeader only, NO StoreHeader (documented in spec/shared/auth-config.md).
+
+servers:
+  - url: http://localhost:{port}/api/v1/shipping
+    variables:
+      port:
+        default: "8008"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+x-global-headers:
+  # Concern B exception: TenantHeader only (store folded into tenant). No StoreHeader for MS-08.
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this store/tenant (store folded into tenant)"
+    testValue: "test-tenant-001"
+
+paths:
+  /quotes:
+    post:
+      operationId: computeShippingQuote
+      summary: Compute shipping options for a delivery and items
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingQuoteRequest"
+      responses:
+        "200":
+          description: Quote produced (may carry a return_code)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingQuote"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /summary:
+    post:
+      operationId: buildShippingSummary
+      summary: Build the shipping summary from the selected option
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingSummaryRequest"
+      responses:
+        "200":
+          description: Summary built
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingSummary"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /packages:
+    post:
+      operationId: computePackages
+      summary: Compute shippable packages (box or per-item)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackagesRequest"
+      responses:
+        "200":
+          description: Packages computed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackagesResponse"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /requires-shipping:
+    post:
+      operationId: requiresShipping
+      summary: Determine whether items require shipping
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequiresShippingRequest"
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequiresShippingResponse"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /configuration:
+    get:
+      operationId: getShippingConfiguration
+      summary: Get the store shipping configuration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingConfiguration"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    put:
+      operationId: saveShippingConfiguration
+      summary: Save the store shipping mode
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveShippingModeRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingConfiguration"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /options:
+    put:
+      operationId: saveShippingOptions
+      summary: Save free-shipping, handling, tax, and price-type options
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveShippingOptionsRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingConfiguration"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /packaging:
+    put:
+      operationId: saveShippingPackaging
+      summary: Save box dimensions and package type
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveShippingPackagingRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingConfiguration"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /supported-countries:
+    get:
+      operationId: listSupportedCountries
+      summary: List supported destination countries
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Supported countries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportedCountriesResponse"
+    put:
+      operationId: setSupportedCountries
+      summary: Replace the supported destination countries
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportedCountriesRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportedCountriesResponse"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /methods:
+    get:
+      operationId: listShippingMethods
+      summary: List region-eligible shipping methods for the store
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Methods
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingMethodsResponse"
+
+  /providers:
+    put:
+      operationId: saveShippingProvider
+      summary: Save (validate + store encrypted) a shipping provider configuration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveShippingProviderRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingProvider"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /providers/{moduleCode}:
+    delete:
+      operationId: deleteShippingProvider
+      summary: Remove a shipping provider configuration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - name: moduleCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /providers/weight-based/configuration:
+    get:
+      operationId: getWeightBasedConfiguration
+      summary: Get the custom weight-based configuration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      responses:
+        "200":
+          description: Configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomWeightConfiguration"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /providers/weight-based/regions:
+    post:
+      operationId: addWeightBasedRegion
+      summary: Add a custom weight-based region
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddRegionRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomWeightRegion"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /providers/weight-based/regions/{regionName}:
+    delete:
+      operationId: deleteWeightBasedRegion
+      summary: Delete a custom weight-based region
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - name: regionName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /providers/weight-based/regions/{regionName}/countries:
+    post:
+      operationId: addCountryToRegion
+      summary: Add a country to a custom weight-based region
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - name: regionName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCountryRequest"
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomWeightRegion"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /providers/weight-based/regions/{regionName}/countries/{countryCode}:
+    delete:
+      operationId: removeCountryFromRegion
+      summary: Remove a country from a custom weight-based region
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - name: regionName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: countryCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /providers/weight-based/regions/{regionName}/prices:
+    post:
+      operationId: addWeightBracket
+      summary: Add a weight-to-price bracket to a region
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - name: regionName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddWeightBracketRequest"
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomWeightRegion"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /providers/weight-based/regions/{regionName}/prices/{maximumWeight}:
+    delete:
+      operationId: removeWeightBracket
+      summary: Remove a weight bracket from a region
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - name: regionName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: maximumWeight
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Removed
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+components:
+  schemas:
+    ShippingType:
+      type: string
+      enum: [National, International]
+    ShippingBasisType:
+      type: string
+      enum: [Billing, Shipping]
+    ShippingOptionPriceType:
+      type: string
+      enum: [Least, Highest, All]
+    ShippingPackageType:
+      type: string
+      enum: [Item, Box]
+    ShippingReturnCode:
+      type: string
+      # External/legacy status codes — NOT domain enum values; kept UPPER_CASE (Concern G note).
+      enum: [NO_SHIPPING_TO_SELECTED_COUNTRY, NO_SHIPPING_MODULE_CONFIGURED, ERROR]
+
+    Delivery:
+      type: object
+      required: [country_code]
+      properties:
+        country_code:
+          type: string
+        name:
+          type: string
+
+    ShippingItem:
+      type: object
+      required: [product_id, quantity]
+      properties:
+        product_id:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+        final_price:
+          type: number
+          format: double
+        weight:
+          type: number
+          format: double
+        height:
+          type: number
+          format: double
+        length:
+          type: number
+          format: double
+        width:
+          type: number
+          format: double
+        virtual:
+          type: boolean
+        shippable:
+          type: boolean
+        attributes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemAttribute"
+
+    ItemAttribute:
+      type: object
+      properties:
+        additional_weight:
+          type: number
+          format: double
+
+    ShippingQuoteRequest:
+      type: object
+      required: [delivery, items]
+      properties:
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShippingItem"
+        language_code:
+          type: string
+
+    ShippingOption:
+      type: object
+      properties:
+        option_id:
+          type: string
+        option_code:
+          type: string
+        option_name:
+          type: string
+        option_price:
+          type: number
+          format: double
+        option_price_text:
+          type: string
+        description:
+          type: string
+
+    ShippingQuote:
+      type: object
+      properties:
+        shipping_module_code:
+          type: string
+        # options is an embedded array INSIDE the ShippingQuote aggregate — keep as-is (Concern D keep).
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShippingOption"
+        selected_option:
+          $ref: "#/components/schemas/ShippingOption"
+        return_code:
+          $ref: "#/components/schemas/ShippingReturnCode"
+        free_shipping:
+          type: boolean
+        free_shipping_amount:
+          type: number
+          format: double
+        handling_fees:
+          type: number
+          format: double
+        apply_tax_on_shipping:
+          type: boolean
+        quote_error:
+          type: string
+
+    ShippingSummaryRequest:
+      type: object
+      required: [quote, selected_option]
+      properties:
+        quote:
+          $ref: "#/components/schemas/ShippingQuote"
+        selected_option:
+          $ref: "#/components/schemas/ShippingOption"
+
+    ShippingSummary:
+      type: object
+      properties:
+        shipping:
+          type: number
+          format: double
+        handling:
+          type: number
+          format: double
+        shipping_module:
+          type: string
+        shipping_option:
+          type: string
+        free_shipping:
+          type: boolean
+        tax_on_shipping:
+          type: boolean
+
+    PackagesRequest:
+      type: object
+      required: [items]
+      properties:
+        strategy:
+          $ref: "#/components/schemas/ShippingPackageType"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShippingItem"
+
+    PackageDetail:
+      type: object
+      properties:
+        item_name:
+          type: string
+        shipping_weight:
+          type: number
+          format: double
+        shipping_height:
+          type: number
+          format: double
+        shipping_length:
+          type: number
+          format: double
+        shipping_width:
+          type: number
+          format: double
+        shipping_quantity:
+          type: integer
+          format: int32
+
+    PackagesResponse:
+      type: object
+      properties:
+        # Concern D: plain list wrapper {packages} normalized to {items}.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PackageDetail"
+
+    RequiresShippingRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShippingItem"
+
+    RequiresShippingResponse:
+      type: object
+      properties:
+        requires_shipping:
+          type: boolean
+
+    ShippingConfiguration:
+      type: object
+      properties:
+        shipping_type:
+          $ref: "#/components/schemas/ShippingType"
+        shipping_basis_type:
+          $ref: "#/components/schemas/ShippingBasisType"
+        shipping_option_price_type:
+          $ref: "#/components/schemas/ShippingOptionPriceType"
+        shipping_package_type:
+          $ref: "#/components/schemas/ShippingPackageType"
+        free_shipping_type:
+          $ref: "#/components/schemas/ShippingType"
+        box_width:
+          type: integer
+          format: int32
+        box_height:
+          type: integer
+          format: int32
+        box_length:
+          type: integer
+          format: int32
+        box_weight:
+          type: number
+          format: double
+        max_weight:
+          type: number
+          format: double
+        free_shipping_enabled:
+          type: boolean
+        order_total_free_shipping:
+          type: number
+          format: double
+        handling_fees:
+          type: number
+          format: double
+        tax_on_shipping:
+          type: boolean
+
+    SaveShippingModeRequest:
+      type: object
+      required: [shipping_type]
+      properties:
+        shipping_type:
+          $ref: "#/components/schemas/ShippingType"
+
+    SaveShippingOptionsRequest:
+      type: object
+      properties:
+        free_shipping_enabled:
+          type: boolean
+        order_total_free_shipping_text:
+          type: string
+        handling_fees_text:
+          type: string
+        tax_on_shipping:
+          type: boolean
+        free_shipping_type:
+          $ref: "#/components/schemas/ShippingType"
+        shipping_option_price_type:
+          $ref: "#/components/schemas/ShippingOptionPriceType"
+
+    SaveShippingPackagingRequest:
+      type: object
+      required: [shipping_package_type]
+      properties:
+        box_width:
+          type: integer
+          format: int32
+        box_height:
+          type: integer
+          format: int32
+        box_length:
+          type: integer
+          format: int32
+        box_weight:
+          type: number
+          format: double
+        shipping_package_type:
+          $ref: "#/components/schemas/ShippingPackageType"
+
+    SupportedCountriesResponse:
+      type: object
+      properties:
+        # Concern D: plain string-array list wrapper {countryCodes} normalized to {items}.
+        items:
+          type: array
+          items:
+            type: string
+
+    SupportedCountriesRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: string
+
+    ShippingMethod:
+      type: object
+      properties:
+        code:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+
+    ShippingMethodsResponse:
+      type: object
+      properties:
+        # Concern D: plain list wrapper {methods} normalized to {items}.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShippingMethod"
+
+    SaveShippingProviderRequest:
+      type: object
+      required: [module_code]
+      properties:
+        module_code:
+          type: string
+        active:
+          type: boolean
+
+    ShippingProvider:
+      type: object
+      properties:
+        module_code:
+          type: string
+        active:
+          type: boolean
+
+    CustomWeightBracket:
+      type: object
+      required: [maximum_weight, price]
+      properties:
+        maximum_weight:
+          type: integer
+          format: int32
+        price:
+          type: number
+          format: double
+        price_text:
+          type: string
+
+    CustomWeightRegion:
+      type: object
+      required: [custom_region_name]
+      properties:
+        custom_region_name:
+          type: string
+        countries:
+          type: array
+          items:
+            type: string
+        quote_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomWeightBracket"
+
+    CustomWeightConfiguration:
+      type: object
+      properties:
+        module_code:
+          type: string
+        active:
+          type: boolean
+        regions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomWeightRegion"
+
+    AddRegionRequest:
+      type: object
+      required: [custom_region_name]
+      properties:
+        custom_region_name:
+          type: string
+
+    AddCountryRequest:
+      type: object
+      required: [country_code]
+      properties:
+        country_code:
+          type: string
+
+    AddWeightBracketRequest:
+      type: object
+      required: [maximum_weight, price_text]
+      properties:
+        maximum_weight:
+          type: integer
+          format: int32
+        price_text:
+          type: string

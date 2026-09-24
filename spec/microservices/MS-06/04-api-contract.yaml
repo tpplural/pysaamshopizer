@@ -1,0 +1,570 @@
+openapi: "3.1.0"
+info:
+  title: Cart Service API
+  version: "1.0.0"
+  description: |
+    API contract for MS-06 cart-service (Shopizer 2.0.1 modernization).
+    Generated from the SAAM specification. SINGLE SOURCE OF TRUTH for field names,
+    paths, and response shapes. Both test suites and code generators MUST reference this file.
+
+    Authoritative money totals (subtotal roll-up + tax + shipping + promotions) are delegated to the
+    Order service (MS-09) — decision BV-3. This service owns only the cart aggregate and a per-line
+    subtotal PREVIEW. Item pricing / product guards read the Catalog service (MS-04).
+
+servers:
+  - url: http://localhost:{port}/api/v1/carts
+    variables:
+      port:
+        default: "8006"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+# Concern B — cart is store-scoped: x-tenant-id + x-store-id both required (BR-CART-003) + x-correlation-id.
+x-global-headers:
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this tenant"
+    testValue: "test-tenant-001"
+  - name: x-store-id
+    required: true
+    description: "Store-level isolation — a cart is bound to one store (BR-CART-003)"
+    testValue: "test-store-001"
+
+paths:
+  /carts:
+    post:
+      operationId: createCart
+      summary: Create a cart (honor supplied token or mint one), bind store and optional shopper
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCartRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    get:
+      operationId: getCartByCustomer
+      summary: Fetch the shopper's single active cart
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: customer_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /carts/{code}:
+    get:
+      operationId: getCart
+      summary: Fetch a cart by its client token (store-scoped); obsolete lines cleaned up on read
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    delete:
+      operationId: deleteCart
+      summary: Delete the whole cart
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+      responses:
+        "204":
+          description: Deleted (no content)
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /carts/{code}/items:
+    post:
+      operationId: addCartItem
+      summary: Add an item to the cart (guards, price snapshot, duplicate-merge)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCartItemRequest"
+      responses:
+        "200":
+          description: Item merged into an existing line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "201":
+          description: Item added as a new line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    put:
+      operationId: updateCartItems
+      summary: Batch update line quantities (min-1 guard, reprice)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCartItemsRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /carts/{code}/items/{itemId}:
+    patch:
+      operationId: updateCartItem
+      summary: Update one line's quantity (min-1 guard, reprice)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+        - $ref: "#/components/parameters/ItemIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCartItemRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    delete:
+      operationId: removeCartItem
+      summary: Remove a line; auto-delete the cart if it becomes empty
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+        - $ref: "#/components/parameters/ItemIdPath"
+      responses:
+        "200":
+          description: Item removed, cart still has items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "204":
+          description: Item removed and cart became empty — cart deleted
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /carts/{code}/summary:
+    get:
+      operationId: getCartSummary
+      summary: Cart view with authoritative totals (delegated to MS-09) and item-count roll-up
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartSummary"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /carts/{code}/shipping-eligibility:
+    get:
+      operationId: getCartShippingEligibility
+      summary: Derive requires-shipping / free-cart / shippable items
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "#/components/parameters/CartCodePath"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartShippingEligibility"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /carts/merge:
+    post:
+      operationId: mergeCarts
+      summary: Merge an anonymous session cart into the shopper's cart (called by MS-05 login flow)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeCartsRequest"
+      responses:
+        "200":
+          description: Merged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+components:
+  parameters:
+    # Service-specific path parameters (cart token + line id) — kept local.
+    CartCodePath:
+      name: code
+      in: path
+      required: true
+      description: Client-facing cart token
+      schema:
+        type: string
+    ItemIdPath:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    Cart:
+      type: object
+      required: [id, code, store_id, quantity, items]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          description: Client-facing cart token (BR-CART-001/002)
+        store_id:
+          type: string
+          format: uuid
+        customer_id:
+          type: [string, "null"]
+          format: uuid
+        quantity:
+          type: integer
+          format: int32
+          description: Sum of line quantities (BR-CART-015)
+        sub_total:
+          type: [string, "null"]
+          description: Display-formatted subtotal preview (from MS-09 summary)
+        total:
+          type: [string, "null"]
+          description: Display-formatted authoritative total (from MS-09, BV-3)
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItem"
+
+    CartItem:
+      type: object
+      required: [id, product_id, quantity]
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          description: Catalog product reference (MS-04)
+        quantity:
+          type: integer
+          format: int32
+        unit_price:
+          type: [number, "null"]
+          format: double
+          description: Price snapshot captured from MS-04 (BR-CART-009/018)
+        sub_total:
+          type: [number, "null"]
+          format: double
+          description: "computed: unit_price * quantity (preview only, BR-CART-013/INV-CART-004)"
+        product_virtual:
+          type: boolean
+        attributes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItemAttribute"
+
+    CartItemAttribute:
+      type: object
+      required: [attribute_id]
+      properties:
+        id:
+          type: [string, "null"]
+        attribute_id:
+          type: string
+          description: Product attribute reference (MS-04)
+        option_name:
+          type: [string, "null"]
+        option_value:
+          type: [string, "null"]
+
+    CartSummary:
+      type: object
+      required: [code, quantity, sub_total, total, totals]
+      properties:
+        code:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+        sub_total:
+          type: string
+          description: Display-formatted subtotal (from MS-09)
+        total:
+          type: string
+          description: Display-formatted authoritative total (from MS-09, BV-3)
+        totals:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderTotalLine"
+
+    OrderTotalLine:
+      type: object
+      required: [code, value]
+      properties:
+        code:
+          type: string
+          description: Total component code (e.g. subtotal, shipping, tax) — sourced from MS-09
+        value:
+          type: number
+          format: double
+
+    CartShippingEligibility:
+      type: object
+      required: [requires_shipping, free_cart, shippable_items]
+      properties:
+        requires_shipping:
+          type: boolean
+        free_cart:
+          type: boolean
+        shippable_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShippableItem"
+
+    ShippableItem:
+      type: object
+      required: [product_id, quantity]
+      properties:
+        product_id:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+
+    CreateCartRequest:
+      type: object
+      required: [store_id]
+      properties:
+        code:
+          type: [string, "null"]
+          description: Optional client-supplied token; minted if absent (BR-CART-001)
+        store_id:
+          type: string
+          format: uuid
+        customer_id:
+          type: [string, "null"]
+          format: uuid
+
+    AddCartItemRequest:
+      type: object
+      required: [product_id]
+      properties:
+        product_id:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+          default: 1
+          description: Defaults to 1 (BR-CART-006)
+        attributes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AddCartItemAttribute"
+
+    AddCartItemAttribute:
+      type: object
+      required: [attribute_id]
+      properties:
+        attribute_id:
+          type: string
+
+    UpdateCartItemRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Must be at least 1 (BR-CART-017)
+
+    UpdateCartItemsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpdateCartItemsLine"
+
+    UpdateCartItemsLine:
+      type: object
+      required: [item_id, quantity]
+      properties:
+        item_id:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+
+    MergeCartsRequest:
+      type: object
+      required: [user_cart_code, session_cart_code]
+      properties:
+        user_cart_code:
+          type: string
+        session_cart_code:
+          type: string
+        customer_id:
+          type: [string, "null"]
+          format: uuid
+
+  responses:
+    # Service-specific 502 (upstream pricing/totals) — kept local; the standard error set is shared.
+    BadGateway:
+      description: Upstream service (pricing/totals) unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"

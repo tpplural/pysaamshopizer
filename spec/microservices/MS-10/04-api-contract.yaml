@@ -1,0 +1,592 @@
+openapi: "3.1.0"
+info:
+  title: Payment Service API
+  version: "1.0.0"
+  description: |
+    API contract for MS-10 payment-service (Shopizer 2.0.1 modernization).
+    Payment orchestration, transaction ledger, payment-method configuration, and the
+    payment-module SPI (pluggable gateway abstraction, EXT-PAY-001).
+    Money-safety by events + reconciliation (BV-2 / ADR-003): capture/refund publish
+    payment.captured / payment.refunded consumed by MS-09; NO cross-service order DB write.
+    SINGLE SOURCE OF TRUTH for field names, paths, and response shapes.
+
+    Shared-convention reconciliation (2026-09-19 human signal) applied: fields are snake_case
+    (Concern A); tenant/store headers reference spec/shared/common-schemas.yaml (Concern B);
+    x-store-id is now REQUIRED (Concern B fix). Error bodies compose the shared ErrorResponse via a
+    local PaymentErrorResponse allOf that adds the optional additive message_key field (Concern E —
+    the shared base is REFERENCED, not forked).
+
+servers:
+  - url: http://localhost:{port}/api/v1/payments
+    variables:
+      port:
+        default: "8010"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+x-global-headers:
+  # Concern B: payment is store-scoped — TenantHeader + StoreHeader (both required). x-store-id made
+  # REQUIRED (was optional). Header set defined once in spec/shared/common-schemas.yaml.
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this tenant"
+    testValue: "test-tenant-001"
+  - name: x-store-id
+    required: true
+    description: "Store isolation within a tenant (required on process/config/method operations — Concern B fix)"
+    testValue: "test-store-001"
+
+paths:
+  /process:
+    post:
+      operationId: processPayment
+      summary: Process a payment (authorize / authorize+capture) for an order
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessPaymentRequest"
+      responses:
+        "200":
+          description: Payment processed (authorize, or init token)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "201":
+          description: Payment processed and ledger transaction created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/GatewayError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /initialize:
+    post:
+      operationId: initializePayment
+      summary: Initialize a redirect/checkout token (not persisted)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitializePaymentRequest"
+      responses:
+        "200":
+          description: Initialization token returned (not persisted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InitializationToken"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/GatewayError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /orders/{orderId}/capture:
+    post:
+      operationId: capturePayment
+      summary: Capture a prior authorization; publishes payment.captured
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: Capture recorded; payment.captured published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/GatewayError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /orders/{orderId}/refund:
+    post:
+      operationId: refundPayment
+      summary: Refund an order; publishes payment.refunded
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefundRequest"
+      responses:
+        "200":
+          description: Refund recorded; payment.refunded published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/GatewayError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /orders/{orderId}/transactions:
+    get:
+      operationId: listOrderTransactions
+      summary: List an order's transactions (details rehydrated)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: Transactions for the order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /orders/{orderId}/capturable-transaction:
+    get:
+      operationId: getCapturableTransaction
+      summary: Get the capturable authorization for an order
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: The capturable authorization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /orders/{orderId}/refundable-transaction:
+    get:
+      operationId: getRefundableTransaction
+      summary: Get the refundable settled transaction for an order
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: The refundable settled transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /methods:
+    get:
+      operationId: listPaymentMethods
+      summary: List region-eligible payment gateways for the store
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      responses:
+        "200":
+          description: Region-eligible gateways
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentGatewayListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /accepted-methods:
+    get:
+      operationId: listAcceptedPaymentMethods
+      summary: List the store's active accepted payment methods
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      responses:
+        "200":
+          description: Active accepted payment methods
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMethodListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /config:
+    get:
+      operationId: getPaymentConfiguration
+      summary: Get the store's configured payment methods (decrypted metadata)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      responses:
+        "200":
+          description: Configured payment methods
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentConfigListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /config/{moduleCode}:
+    put:
+      operationId: savePaymentConfiguration
+      summary: Save/validate a payment-method configuration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/ModuleCodePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavePaymentConfigRequest"
+      responses:
+        "200":
+          description: Configuration saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentConfig"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: removePaymentConfiguration
+      summary: Remove a payment-method configuration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/ModuleCodePath"
+      responses:
+        "204":
+          description: Configuration removed
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    # Order/module path params. URL path-template names {orderId} / {moduleCode} kept unchanged.
+    OrderIdPath:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ModuleCodePath:
+      name: moduleCode
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    TransactionType:
+      type: string
+      enum: [Init, Authorize, Capture, AuthorizeCapture, Refund]
+
+    PaymentType:
+      type: string
+      enum: [CreditCard, Free, Cod, MoneyOrder, Paypal]
+
+    CreditCardType:
+      type: string
+      enum: [Amex, Visa, Mastercard, Diners, Discovery]
+
+    CreditCard:
+      type: object
+      required: [number, type, exp_month, exp_year]
+      properties:
+        number:
+          type: string
+          description: "Card number (digits and permitted separators)"
+        type:
+          $ref: "#/components/schemas/CreditCardType"
+        exp_month:
+          type: string
+        exp_year:
+          type: string
+        card_owner:
+          type: string
+
+    ProcessPaymentRequest:
+      type: object
+      required: [order_id, module_name, amount]
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        module_name:
+          type: string
+          description: "Configured payment method code (gateway plug-in code)"
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        amount:
+          type: number
+          format: double
+        card:
+          $ref: "#/components/schemas/CreditCard"
+        payer_id:
+          type: string
+          description: "PayPal express payer id (PayPal payments only)"
+        payment_token:
+          type: string
+          description: "PayPal express payment token (PayPal payments only)"
+
+    InitializePaymentRequest:
+      type: object
+      required: [order_id, module_name, amount]
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        module_name:
+          type: string
+        amount:
+          type: number
+          format: double
+
+    RefundRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          format: double
+
+    SavePaymentConfigRequest:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+        default_selected:
+          type: boolean
+        transaction_mode:
+          type: string
+          enum: [Authorize, AuthorizeCapture]
+        integration_keys:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Gateway credentials/settings — encrypted at rest, never returned in clear text"
+
+    Transaction:
+      type: object
+      required: [transaction_id, transaction_type]
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+        currency:
+          type: string
+        transaction_type:
+          $ref: "#/components/schemas/TransactionType"
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        payment_module_code:
+          type: string
+        transaction_date:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Gateway artifacts (tokens, references)"
+        event_published:
+          type: string
+          description: "Domain event emitted (payment.captured / payment.refunded), if any"
+        persisted:
+          type: boolean
+        partial:
+          type: boolean
+
+    InitializationToken:
+      type: object
+      required: [transaction_type, token, persisted]
+      properties:
+        transaction_type:
+          $ref: "#/components/schemas/TransactionType"
+        token:
+          type: string
+        persisted:
+          type: boolean
+
+    PaymentGateway:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+        operations:
+          type: array
+          items:
+            type: string
+
+    PaymentMethod:
+      type: object
+      required: [code, payment_type]
+      properties:
+        code:
+          type: string
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        default_selected:
+          type: boolean
+
+    PaymentConfig:
+      type: object
+      required: [module_code, active]
+      properties:
+        module_code:
+          type: string
+        active:
+          type: boolean
+        default_selected:
+          type: boolean
+        transaction_mode:
+          type: string
+          enum: [Authorize, AuthorizeCapture]
+
+    TransactionListResponse:
+      type: object
+      properties:
+        # Concern D: plain list wrapper {transactions} normalized to {items}.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+
+    PaymentGatewayListResponse:
+      type: object
+      properties:
+        # Concern D: plain list wrapper {methods} normalized to {items}.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentGateway"
+
+    PaymentMethodListResponse:
+      type: object
+      properties:
+        # Concern D: plain list wrapper {methods} normalized to {items}.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentMethod"
+
+    PaymentConfigListResponse:
+      type: object
+      properties:
+        # Concern D: plain list wrapper {methods} normalized to {items}.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentConfig"
+
+    # Concern E: payment composes the shared ErrorResponse and ADDS an optional additive message_key
+    # (i18n key for gateway errors). The shared base is REFERENCED via allOf, not forked/copied.
+    PaymentErrorResponse:
+      allOf:
+        - $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"
+        - type: object
+          properties:
+            message_key:
+              type: string
+              description: "Optional i18n key for gateway/payment errors (payment-specific additive field)."
+
+  responses:
+    # Payment error responses use the local PaymentErrorResponse (shared base + message_key). The four
+    # standard shapes are kept local so every payment error body carries the optional message_key.
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"
+    UnprocessableEntity:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"
+    NotImplemented:
+      description: Operation not supported by the payment module
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"
+    GatewayError:
+      description: Payment gateway error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"
+    InternalError:
+      description: Server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaymentErrorResponse"

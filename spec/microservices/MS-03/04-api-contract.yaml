@@ -1,0 +1,478 @@
+openapi: "3.1.0"
+info:
+  title: merchant-store API
+  version: "1.0.0"
+  description: |
+    API contract for MS-03 merchant-store (Shopizer 2.0.1 modernization).
+    Generated from the SAAM specification. SINGLE SOURCE OF TRUTH for field names,
+    paths, and response shapes. Both test suites and code generators MUST reference this file.
+    Reference codes (country_iso, zone_code, currency_code, language_code) are xref values
+    validated against MS-01 reference-data, not local foreign keys.
+
+servers:
+  - url: http://localhost:{port}/api/v1
+    variables:
+      port:
+        default: "8003"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+# Concern B — merchant-store is tenant-scoped: x-tenant-id required + x-correlation-id; no x-store-id.
+x-global-headers:
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — the acting tenant/store scope"
+    testValue: "test-tenant-001"
+  - name: x-correlation-id
+    required: false
+    description: "Distributed tracing correlation id"
+    testValue: "test-corr-001"
+  - name: Authorization
+    required: true
+    description: "JWT Bearer token (admin operations)"
+    testValue: "Bearer test-token"
+
+paths:
+  /stores:
+    get:
+      operationId: listStores
+      summary: List merchant stores (excludes the reserved DEFAULT store)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreListResponse"
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    post:
+      operationId: createStore
+      summary: Create a merchant store
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStoreRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /stores/code-availability:
+    get:
+      operationId: checkStoreCodeAvailability
+      summary: Check whether a store code is available
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Availability result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CodeAvailabilityResponse"
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /stores/{code}:
+    get:
+      operationId: getStore
+      summary: Get a fully-resolved store by code
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: updateStore
+      summary: Update an existing store (own-store only; template not editable here)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStoreRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    delete:
+      operationId: decommissionStore
+      summary: Decommission a store (superadmin only) — starts merchant.deleted saga
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Decommission accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecommissionResponse"
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "409": { $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /stores/{code}/logo:
+    put:
+      operationId: uploadStoreLogo
+      summary: Upload or replace the store logo (bytes stored in content-cms)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/LogoUploadRequest"
+      responses:
+        "200":
+          description: Logo set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreBranding"
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    delete:
+      operationId: removeStoreLogo
+      summary: Remove the store logo
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Logo removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreBranding"
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /stores/{code}/template:
+    put:
+      operationId: setStoreTemplate
+      summary: Set the store presentation template
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTemplateRequest"
+      responses:
+        "200":
+          description: Template set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreBranding"
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+  /stores/{code}/landing:
+    get:
+      operationId: getStoreLanding
+      summary: Get the store landing area metadata
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreLanding"
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+    put:
+      operationId: saveStoreLanding
+      summary: Provision/update the store landing area (content body persisted by content-cms)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveLandingRequest"
+      responses:
+        "200":
+          description: Landing saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreLanding"
+        "400": { $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest" }
+        "401": { $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized" }
+        "403": { $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden" }
+        "404": { $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound" }
+        "422": { $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError" }
+
+components:
+  schemas:
+    WeightUnit:
+      type: string
+      enum: [LB, KG]
+    DimensionUnit:
+      type: string
+      enum: [CM, IN]
+
+    Store:
+      type: object
+      required: [id, code, name, phone, email, city, postal_code, country_iso, default_language_code, currency_code, language_codes]
+      properties:
+        id: { type: integer, format: int64 }
+        code: { type: string, pattern: "^[a-zA-Z0-9_]*$" }
+        name: { type: string, maxLength: 100 }
+        phone: { type: string, maxLength: 50 }
+        email: { type: string, format: email, maxLength: 60 }
+        address: { type: string, maxLength: 255 }
+        city: { type: string, maxLength: 100 }
+        postal_code: { type: string, maxLength: 15 }
+        country_iso: { type: string, description: "xref MS-01 country ISO" }
+        zone_code: { type: string, description: "xref MS-01 zone code, nullable" }
+        state_province: { type: string, maxLength: 100 }
+        default_language_code: { type: string, description: "xref MS-01 language code" }
+        currency_code: { type: string, description: "xref MS-01 currency code" }
+        language_codes:
+          type: array
+          items: { type: string }
+        weight_unit: { $ref: "#/components/schemas/WeightUnit" }
+        dimension_unit: { $ref: "#/components/schemas/DimensionUnit" }
+        in_business_since: { type: string, format: date }
+        use_cache: { type: boolean }
+        currency_format_national: { type: boolean }
+        store_template: { type: string, maxLength: 25 }
+        invoice_template: { type: string, maxLength: 25 }
+        domain_name: { type: string, maxLength: 80 }
+        continue_shopping_url: { type: string, maxLength: 150 }
+        store_logo: { type: string, maxLength: 100 }
+        is_default: { type: boolean }
+
+    CreateStoreRequest:
+      type: object
+      required: [code, name, phone, email, city, postal_code, country_iso, default_language_code, currency_code, language_codes]
+      properties:
+        code: { type: string, pattern: "^[a-zA-Z0-9_]*$", maxLength: 100 }
+        name: { type: string, maxLength: 100 }
+        phone: { type: string, maxLength: 50 }
+        email: { type: string, format: email, maxLength: 60 }
+        address: { type: string, maxLength: 255 }
+        city: { type: string, maxLength: 100 }
+        postal_code: { type: string, maxLength: 15 }
+        country_iso: { type: string }
+        zone_code: { type: string }
+        state_province: { type: string, maxLength: 100 }
+        default_language_code: { type: string }
+        currency_code: { type: string }
+        language_codes:
+          type: array
+          minItems: 1
+          items: { type: string }
+        weight_unit: { $ref: "#/components/schemas/WeightUnit" }
+        dimension_unit: { $ref: "#/components/schemas/DimensionUnit" }
+        in_business_since: { type: string, format: date }
+        use_cache: { type: boolean, default: false }
+        currency_format_national: { type: boolean, default: false }
+        domain_name: { type: string, maxLength: 80 }
+        continue_shopping_url: { type: string, maxLength: 150 }
+
+    UpdateStoreRequest:
+      type: object
+      required: [name, phone, email, city, postal_code, country_iso, default_language_code, currency_code, language_codes]
+      properties:
+        name: { type: string, maxLength: 100 }
+        phone: { type: string, maxLength: 50 }
+        email: { type: string, format: email, maxLength: 60 }
+        address: { type: string, maxLength: 255 }
+        city: { type: string, maxLength: 100 }
+        postal_code: { type: string, maxLength: 15 }
+        country_iso: { type: string }
+        zone_code: { type: string }
+        state_province: { type: string, maxLength: 100 }
+        default_language_code: { type: string }
+        currency_code: { type: string }
+        language_codes:
+          type: array
+          minItems: 1
+          items: { type: string }
+        weight_unit: { $ref: "#/components/schemas/WeightUnit" }
+        dimension_unit: { $ref: "#/components/schemas/DimensionUnit" }
+        in_business_since: { type: string, format: date }
+        use_cache: { type: boolean }
+        currency_format_national: { type: boolean }
+        domain_name: { type: string, maxLength: 80 }
+        continue_shopping_url: { type: string, maxLength: 150 }
+
+    CodeAvailabilityResponse:
+      type: object
+      required: [code, available]
+      properties:
+        code: { type: string }
+        available: { type: boolean }
+
+    DecommissionResponse:
+      type: object
+      required: [status, merchant_id]
+      properties:
+        status: { type: string, description: "Decommissioning" }
+        merchant_id: { type: integer, format: int64 }
+        event: { type: string, description: "merchant.deleted" }
+
+    LogoUploadRequest:
+      type: object
+      required: [file]
+      properties:
+        file: { type: string, format: binary }
+
+    StoreBranding:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+        store_logo: { type: string, maxLength: 100 }
+        store_template: { type: string, maxLength: 25 }
+
+    SetTemplateRequest:
+      type: object
+      required: [template]
+      properties:
+        template: { type: string, maxLength: 25 }
+
+    LandingDescription:
+      type: object
+      required: [language_code, title]
+      properties:
+        language_code: { type: string }
+        title: { type: string }
+        home_page_content: { type: string }
+        keywords: { type: string }
+        description: { type: string }
+
+    SaveLandingRequest:
+      type: object
+      required: [descriptions]
+      properties:
+        descriptions:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/LandingDescription" }
+
+    StoreLanding:
+      type: object
+      required: [code, landing_code]
+      properties:
+        code: { type: string }
+        landing_code: { type: string, description: "reserved landing section code" }
+        provisioned: { type: boolean }
+        descriptions:
+          type: array
+          items: { $ref: "#/components/schemas/LandingDescription" }
+
+    StoreListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Store" }
+        pagination: { $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo" }

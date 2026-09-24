@@ -1,0 +1,50 @@
+# SAAM Phase 4 Stage 1.5 — Event Schema
+# NOTE: discovered during Stage 1.5 event compilation (not among the 3 originally-listed events,
+# but a real published domain event backed by MS-03 BR-MS-LIFE-002 with 8 named consumers).
+event: merchant.deleted
+version: "1.0.0"
+description: >
+  Emitted by the merchant-store service when a store is decommissioned (R-06 event-driven cascade
+  saga, replacing the legacy in-process cascade delete). Every store-scoped service consumes it to
+  purge that store's owned aggregates in its own transaction.
+
+publisher: MS-03 merchant-store
+triggered_by:
+  - BR-MS-LIFE-002   # store decommission — event-driven cascade saga
+
+consumers:
+  - { service: MS-04 catalog,        action: "Purge the store's products/categories/manufacturers/options." }
+  - { service: MS-05 customer,        action: "Purge the store's shopper records + attributes." }
+  - { service: MS-06 cart,            action: "Purge the store's carts." }
+  - { service: MS-07 tax,             action: "Purge the store's tax classes/rates/configuration." }
+  - { service: MS-08 shipping,        action: "Purge the store's shipping config/supported countries/weight regions." }
+  - { service: MS-09 order,           action: "Decommission the store's orders (retain ledger per policy)." }
+  - { service: MS-10 payment,         action: "Purge the store's payment-method configuration (retain ledger for audit)." }
+  - { service: MS-11 content-cms,     action: "Purge the store's content rows + blob namespace." }
+  - { service: MS-02 identity-admin,  action: "Remove the store's admin memberships (if store-scoped)." }
+
+channel: merchant.deleted
+delivery:
+  guarantees: at-least-once
+  ordering: by merchantId
+  note: partial-failure / compensation handled by the decommission saga (BR-MS-LIFE-002 error path).
+
+payload:
+  type: object
+  required: [merchantId, storeCode, timestamp]
+  properties:
+    merchantId:
+      type: integer
+      format: int64
+      description: Surrogate id of the decommissioned store.
+    storeCode:
+      type: string
+      description: Store business key / code (the object-store namespace key for MS-11).
+    timestamp:
+      type: string
+      format: date-time
+
+example:
+  merchantId: 42
+  storeCode: "acme_store"
+  timestamp: "2026-01-01T12:00:00Z"

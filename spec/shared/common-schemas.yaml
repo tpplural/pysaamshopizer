@@ -1,0 +1,111 @@
+# Shared Common Schemas — Shopizer Modernization
+#
+# DERIVED (not forward-declared) from the Stage 1.5 shared-convention reconciliation, after the human
+# reconciliation signal (assessment/shared-convention-reconciliation-completed.md, 2026-09-19).
+#
+# Governing principle: "Common to spec/shared/, module-specific to the service spec." Every concern that
+# appears in more than one service is defined ONCE here and REFERENCED by each service's
+# 04-api-contract.yaml. Only genuine module-specific variation stays in the service spec.
+#
+# WIRE CONVENTIONS (system-wide, human-decided):
+#   - fieldNaming: snake_case            (Concern A — target = Python/FastAPI; DTOs are Pydantic v2 snake_case)
+#   - endpointNaming: kebab-case
+#   - enumValues: PascalCase             (Concern G — MS-08 normalized from UPPER_CASE)
+#   - queryParams: snake_case
+#   - headerNaming: kebab-case (x-tenant-id, x-store-id, x-correlation-id)
+#   - identifiers: entity ids, customer_id, store_id are string/uuid system-wide (Concern F).
+#                  reference-data surrogate ids (country/zone/language/currency) stay integer where they
+#                  are the legacy reference key; cross-service references use the string CODE.
+
+openapi_fragment_version: "1.0"
+
+components:
+  parameters:
+    # --- Concern B: tenant/store headers (required on store-scoped services) ---
+    TenantHeader:
+      name: x-tenant-id
+      in: header
+      required: true
+      description: "Multi-tenancy isolation — all queries scoped to this tenant."
+      schema: { type: string }
+    StoreHeader:
+      name: x-store-id
+      in: header
+      required: true
+      description: "Store-level scoping within a tenant. Required on all store-scoped operations. Absent only where store == tenant (MS-04 catalog, MS-08 shipping — documented in-service)."
+      schema: { type: string }
+    CorrelationHeader:
+      name: x-correlation-id
+      in: header
+      required: false
+      description: "Distributed-tracing correlation id, propagated across service calls."
+      schema: { type: string }
+
+    # --- Concern C: pagination params (page/pageSize, defaulted) ---
+    PageParam:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, default: 1, minimum: 1 }
+    PageSizeParam:
+      name: page_size
+      in: query
+      required: false
+      schema: { type: integer, default: 20, minimum: 1, maximum: 200 }
+
+  schemas:
+    # --- Concern C/D: shared pagination info + paged list envelope ---
+    PaginationInfo:
+      type: object
+      required: [page, page_size, total_items, total_pages]
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total_items: { type: integer }
+        total_pages: { type: integer }
+
+    # Paged collections use { items: [...], pagination: PaginationInfo }.
+    # Services define their own <Entity>ListResponse that sets items.items -> <Entity> and
+    # references PaginationInfo here (OpenAPI cannot express a generic; each service specializes items).
+
+    # --- Concern E: shared error response ---
+    ErrorResponse:
+      type: object
+      required: [error, message, status_code]
+      properties:
+        error: { type: string, description: "Machine-readable error class (e.g. ValidationError, NotFound, Conflict)." }
+        message: { type: string, description: "Human-readable message." }
+        status_code: { type: integer }
+        timestamp: { type: string, format: date-time }
+        # MS-10 payment adds an optional additive field message_key (i18n key for gateway errors) — a
+        # legitimately service-specific extension declared in the payment contract, not a fork of this base.
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Unauthorized:
+      description: Authentication required
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Forbidden:
+      description: Not permitted
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    NotFound:
+      description: Resource not found
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Conflict:
+      description: Resource conflict
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    UnprocessableEntity:
+      description: Validation failed
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    InternalError:
+      description: Server error
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+
+# Notes on identifier types (Concern F — canonical, system-wide):
+#   customer_id : string (uuid)   — fixes order CustomerRef (was int64), cart (was nullable int64/string), customer (was integer/uuid)
+#   store_id    : string (uuid)   — fixes cart (was int64), order (was string), customer (was integer)
+#   entity ids  : string (uuid)   — product/cart/order/content/tax/etc. all string/uuid; no bare untyped string
+#   country/zone/language/currency reference: numeric surrogate id stays integer where it is the legacy
+#     reference key; cross-service references carry the string CODE (iso_code / code), never the numeric id.

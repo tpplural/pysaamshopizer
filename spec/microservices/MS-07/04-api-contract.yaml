@@ -1,0 +1,632 @@
+openapi: "3.1.0"
+info:
+  title: Tax Service API
+  version: "1.0.0"
+  description: |
+    API contract for MS-07 (tax): tax classes, tax rates, tax configuration, and the tax
+    calculation engine. Generated from the SAAM specification. This is the SINGLE SOURCE OF TRUTH
+    for field names, paths, and response shapes. Both test suites and code generators MUST reference
+    this file.
+
+    Shared-convention reconciliation (2026-09-19 human signal) applied: fields are snake_case
+    (Concern A); tenant/store headers, pagination params/info, and the error response reference
+    spec/shared/common-schemas.yaml (Concerns B/C/E); entity ids are string/uuid where a uuid is
+    intended (Concern F).
+
+    Preserved-as-is behaviors (decision D-06): jurisdiction is always the billing address
+    (BR-TAX-007); the two collection flags are not round-tripped (BR-TAX-003); tax-class does not
+    filter rates (BR-TAX-019); duplicate-code tax lines are deduped to the first (BR-TAX-023).
+
+servers:
+  - url: http://localhost:{port}/api/v1/tax
+    variables:
+      port:
+        default: "8007"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+x-global-headers:
+  # Concern B: MS-07 tax is store-scoped — TenantHeader + StoreHeader (both required).
+  # Header set defined once in spec/shared/common-schemas.yaml (TenantHeader / StoreHeader).
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this tenant"
+    testValue: "test-tenant-001"
+  - name: x-store-id
+    required: true
+    description: "Store-level scoping within a tenant"
+    testValue: "test-store-001"
+
+paths:
+  /calculate:
+    post:
+      operationId: calculateTax
+      summary: Calculate tax over an order (the calculation engine)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxCalculationRequest"
+      responses:
+        "200":
+          description: Tax lines, or null when no tax applies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxCalculationResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /configuration:
+    get:
+      operationId: getTaxConfiguration
+      summary: Get the store's tax configuration (defaults if none saved)
+      responses:
+        "200":
+          description: Tax configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxConfiguration"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    put:
+      operationId: saveTaxConfiguration
+      summary: Create or update the store's tax configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxConfiguration"
+      responses:
+        "200":
+          description: Saved tax configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxConfiguration"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /tax-classes:
+    get:
+      operationId: listTaxClasses
+      summary: List the store's tax classes (DEFAULT hidden)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxClassListResponse"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    post:
+      operationId: createTaxClass
+      summary: Create a tax class
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaxClassRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxClass"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /tax-classes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getTaxClass
+      summary: Get a tax class by id
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxClass"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+    put:
+      operationId: updateTaxClass
+      summary: Update a tax class
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTaxClassRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxClass"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+    delete:
+      operationId: deleteTaxClass
+      summary: Delete a tax class (blocked if products reference it)
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+
+  /tax-rates:
+    get:
+      operationId: listTaxRates
+      summary: List the store's tax rates
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRateListResponse"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    post:
+      operationId: createTaxRate
+      summary: Create a tax rate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaxRateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRate"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /tax-rates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getTaxRate
+      summary: Get a tax rate by id
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRate"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+    put:
+      operationId: updateTaxRate
+      summary: Update a tax rate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTaxRateRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRate"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+    delete:
+      operationId: deleteTaxRate
+      summary: Delete a tax rate
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+components:
+  schemas:
+    TaxBasisCalculation:
+      type: string
+      enum: [StoreAddress, ShippingAddress, BillingAddress]
+      description: "Configured tax basis. NOTE: not applied at runtime — billing address is always used (BR-TAX-007)."
+
+    TaxConfiguration:
+      type: object
+      required: [tax_basis_calculation]
+      properties:
+        tax_basis_calculation:
+          $ref: "#/components/schemas/TaxBasisCalculation"
+        collect_tax_if_different_province_of_store_country:
+          type: boolean
+          default: true
+          description: "Collect tax across provinces of the store's country (BR-TAX-008/010). Not round-tripped by legacy serialization (BR-TAX-003)."
+        collect_tax_if_different_country_of_store_country:
+          type: boolean
+          default: false
+          description: "Collect tax across countries; forces store address as jurisdiction (BR-TAX-009/010)."
+
+    TaxClass:
+      type: object
+      required: [id, code, title]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          maxLength: 10
+          description: "Unique per store; DEFAULT is reserved (BR-TAX-025)."
+        title:
+          type: string
+          maxLength: 32
+        merchant_store_id:
+          type: integer
+          format: int64
+
+    CreateTaxClassRequest:
+      type: object
+      required: [code, title]
+      properties:
+        code:
+          type: string
+          maxLength: 10
+        title:
+          type: string
+          maxLength: 32
+
+    UpdateTaxClassRequest:
+      type: object
+      required: [code, title]
+      properties:
+        code:
+          type: string
+          maxLength: 10
+        title:
+          type: string
+          maxLength: 32
+
+    TaxClassListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxClass"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+    TaxRateDescriptionItem:
+      type: object
+      required: [language_id, name]
+      properties:
+        language_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          maxLength: 120
+
+    TaxRate:
+      type: object
+      required: [id, code, rate, tax_class_id, country_id, tax_priority, piggyback]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          description: "Unique per store (BR-TAX-027)."
+        rate:
+          type: number
+          format: double
+          description: "Percent, precision 7 scale 4 (e.g. 5.0000)."
+        rate_display:
+          type: string
+          description: "Rate formatted to 3 decimals for display (BR-TAX-028); storage retains scale 4."
+        tax_priority:
+          type: integer
+          format: int32
+          default: 0
+          description: "Ascending order drives compound stacking (BR-TAX-017/021)."
+        piggyback:
+          type: boolean
+          default: false
+          description: "Compound (tax-on-tax) rate (BR-TAX-021)."
+        tax_class_id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        country_id:
+          type: integer
+          format: int64
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+        state_province:
+          type: string
+          nullable: true
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxRateDescriptionItem"
+
+    CreateTaxRateRequest:
+      type: object
+      required: [code, rate_text, tax_class_id, country_iso_code, descriptions]
+      properties:
+        code:
+          type: string
+        rate_text:
+          type: string
+          description: "Rate as text; must parse to a decimal (BR-TAX-027)."
+        tax_class_id:
+          type: string
+          format: uuid
+        country_iso_code:
+          type: string
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+        state_province:
+          type: string
+          nullable: true
+        tax_priority:
+          type: integer
+          format: int32
+          nullable: true
+          description: "Defaults to 0 when omitted (BR-TAX-027)."
+        piggyback:
+          type: boolean
+          default: false
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Cleared to null when piggyback is false (BR-TAX-027)."
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxRateDescriptionItem"
+
+    UpdateTaxRateRequest:
+      type: object
+      required: [code, rate_text, tax_class_id, country_iso_code, descriptions]
+      properties:
+        code:
+          type: string
+        rate_text:
+          type: string
+        tax_class_id:
+          type: string
+          format: uuid
+        country_iso_code:
+          type: string
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+        state_province:
+          type: string
+          nullable: true
+        tax_priority:
+          type: integer
+          format: int32
+          nullable: true
+        piggyback:
+          type: boolean
+          default: false
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxRateDescriptionItem"
+
+    TaxRateListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxRate"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+    TaxCalculationItem:
+      type: object
+      required: [unit_price, quantity]
+      properties:
+        unit_price:
+          type: number
+          format: double
+          description: "Tax-exclusive item unit price."
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+        tax_class_code:
+          type: string
+          nullable: true
+          description: "Null falls back to DEFAULT tax class (BR-TAX-012)."
+
+    Address:
+      type: object
+      properties:
+        country_id:
+          type: integer
+          format: int64
+          nullable: true
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+        state:
+          type: string
+          nullable: true
+
+    CustomerContext:
+      type: object
+      properties:
+        billing:
+          $ref: "#/components/schemas/Address"
+        delivery:
+          $ref: "#/components/schemas/Address"
+
+    StoreContext:
+      type: object
+      properties:
+        country_id:
+          type: integer
+          format: int64
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+        state_province:
+          type: string
+          nullable: true
+
+    ShippingContext:
+      type: object
+      properties:
+        shipping:
+          type: number
+          format: double
+        handling:
+          type: number
+          format: double
+          nullable: true
+
+    TaxCalculationRequest:
+      type: object
+      required: [items]
+      properties:
+        customer:
+          $ref: "#/components/schemas/CustomerContext"
+        store:
+          $ref: "#/components/schemas/StoreContext"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxCalculationItem"
+        shipping:
+          $ref: "#/components/schemas/ShippingContext"
+        language_id:
+          type: integer
+          format: int64
+        tax_basis:
+          $ref: "#/components/schemas/TaxBasisCalculation"
+
+    TaxLine:
+      type: object
+      required: [code, label, rate, amount]
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+          description: "Rate description name in the requested language (BR-TAX-020)."
+        rate:
+          type: number
+          format: double
+        amount:
+          type: number
+          format: double
+          description: "Rounded to 2 decimals half-up (BR-TAX-022)."
+
+    TaxCalculationResponse:
+      type: object
+      description: "The tax lines, or null when no tax applies (BR-TAX-024)."
+      nullable: true
+      properties:
+        tax_lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxLine"

@@ -1,0 +1,939 @@
+openapi: "3.1.0"
+info:
+  title: identity-admin API
+  version: "1.0.0"
+  description: |
+    API contract for identity-admin (MS-02) — Shopizer 2.0.1 modernization.
+    Generated from SAAM specification. SINGLE SOURCE OF TRUTH for field names, paths, and response shapes.
+    Both test suites and code generators MUST reference this file.
+    Auth is delegated to OIDC (ADR-004); credentials are not stored by this service.
+
+servers:
+  - url: http://localhost:{port}/api/v1/identity
+    variables:
+      port:
+        default: "8002"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+# Concern B — identity-admin is tenant-scoped: x-tenant-id required; no x-store-id.
+x-global-headers:
+  - name: x-tenant-id
+    required: true
+    description: "Store scope — every query scoped to this tenant/store (BR-SC-AUTHZ-001)"
+    testValue: "test-tenant-001"
+  - name: x-correlation-id
+    required: false
+    description: "Distributed tracing correlation id"
+    testValue: "test-corr-001"
+  - name: Authorization
+    required: false
+    description: "OIDC Bearer token (required on all endpoints except login and password-reset)"
+    testValue: "Bearer test-token"
+
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      summary: Authenticate an administrator
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Terminate the current session
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "204":
+          description: Logged out
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+
+  /context:
+    get:
+      operationId: getContext
+      summary: Resolve the active administrator and store for the request
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "200":
+          description: Context resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminContext"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+
+  /bootstrap/default-admin:
+    post:
+      operationId: provisionDefaultAdmin
+      summary: Provision the default super-administrator on a fresh install
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "201":
+          description: Default admin provisioned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /menu:
+    get:
+      operationId: getMenu
+      summary: Return the admin menu tree
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: filter_by_authority
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Menu tree
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+
+  /users:
+    get:
+      operationId: listUsers
+      summary: List managed administrators (scoped, super-admins hidden)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserListResponse"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+    post:
+      operationId: createUser
+      summary: Create an administrator
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /users/{id}:
+    parameters:
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+      - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: getUser
+      summary: Get an administrator by id
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+    put:
+      operationId: updateUser
+      summary: Edit an administrator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+    delete:
+      operationId: deleteUser
+      summary: Delete an administrator
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /users/by-username/{userName}:
+    get:
+      operationId: getUserByUsername
+      summary: Get an administrator by login name (only if fully provisioned)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: userName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /users/check-username:
+    get:
+      operationId: checkUsername
+      summary: Check whether a login name is available
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: user_name
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Availability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsernameAvailability"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+
+  /users/{id}/effective-permissions:
+    get:
+      operationId: getEffectivePermissions
+      summary: Resolve a user's effective permissions (union of group permissions + AUTH)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Effective permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectivePermissions"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /users/{id}/authorization:
+    get:
+      operationId: checkAuthorization
+      summary: Test whether a user holds a given role
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: role
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Authorization decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationDecision"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /users/me/password:
+    post:
+      operationId: changeOwnPassword
+      summary: Change the authenticated administrator's own password
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordChangeResult"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /password-reset/questions:
+    post:
+      operationId: resetRequestQuestions
+      summary: Reset step 1 — return security questions for a login name
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetQuestionsRequest"
+      responses:
+        "200":
+          description: Security questions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityQuestions"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /password-reset/verify:
+    post:
+      operationId: resetVerifyAnswers
+      summary: Reset step 2 — verify security answers
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetVerifyResult"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+
+  /password-reset/complete:
+    post:
+      operationId: resetComplete
+      summary: Reset step 3 — set a random temporary password and email it
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      responses:
+        "200":
+          description: Reset completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetCompleteResult"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+
+  /groups:
+    get:
+      operationId: listGroups
+      summary: List groups (type filter, all, or by granted permission)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/GroupType"
+        - name: grants_permission_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+    post:
+      operationId: createGroup
+      summary: Create a group
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroupRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+
+  /groups/{id}:
+    get:
+      operationId: getGroup
+      summary: Get a group by id
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /groups/{groupId}/permissions/{permissionId}:
+    delete:
+      operationId: removePermissionFromGroup
+      summary: Unlink one permission from a group
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: permissionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Unlinked
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+  /permissions:
+    get:
+      operationId: listPermissions
+      summary: List/page permissions (optional group filter)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: group_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Permissions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+    post:
+      operationId: createPermission
+      summary: Create a permission
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePermissionRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Permission"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+
+  /permissions/{id}:
+    delete:
+      operationId: deletePermission
+      summary: Delete a permission (detach group links first)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/CorrelationHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+
+components:
+  schemas:
+    GroupType:
+      type: string
+      enum: [Admin, Customer]
+      description: "Group classification (BR-SC-RBAC-004). Wire values map to legacy ADMIN|CUSTOMER."
+
+    AdminUser:
+      type: object
+      required: [id, user_name, email, active]
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_name:
+          type: string
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        merchant_id:
+          type: integer
+          format: int64
+        store_code:
+          type: string
+        language_code:
+          type: string
+        active:
+          type: boolean
+        last_access:
+          type: string
+          format: date-time
+        login_time:
+          type: string
+          format: date-time
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/Group"
+
+    AdminUserSummary:
+      type: object
+      required: [user_id, name]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        email:
+          type: string
+        active:
+          type: boolean
+        store_code:
+          type: string
+
+    AdminUserListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUserSummary"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+    Group:
+      type: object
+      required: [id, group_name, group_type]
+      properties:
+        id:
+          type: integer
+          format: int64
+        group_name:
+          type: string
+        group_type:
+          $ref: "#/components/schemas/GroupType"
+        description:
+          type: string
+
+    GroupListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Group"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+    Permission:
+      type: object
+      required: [id, permission_name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        permission_name:
+          type: string
+
+    PermissionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      required: [authenticated]
+      properties:
+        authenticated:
+          type: boolean
+        user_id:
+          type: integer
+          format: int64
+        authorities:
+          type: array
+          items:
+            type: string
+        last_access:
+          type: string
+          format: date-time
+        login_time:
+          type: string
+          format: date-time
+
+    AdminContext:
+      type: object
+      properties:
+        user_name:
+          type: string
+        active_store:
+          type: string
+        cached:
+          type: boolean
+
+    MenuItem:
+      type: object
+      required: [code, role]
+      properties:
+        code:
+          type: string
+        role:
+          type: string
+        url:
+          type: string
+        icon:
+          type: string
+        order:
+          type: integer
+        menus:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItem"
+
+    MenuListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItem"
+
+    EffectivePermissions:
+      type: object
+      required: [user_id, permissions]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        permissions:
+          type: array
+          items:
+            type: string
+
+    AuthorizationDecision:
+      type: object
+      required: [role, granted]
+      properties:
+        role:
+          type: string
+        granted:
+          type: boolean
+
+    UsernameAvailability:
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+        reason:
+          type: string
+
+    CreateUserRequest:
+      type: object
+      required: [user_name, email, password, group_ids, security_questions, security_answers]
+      properties:
+        user_name:
+          type: string
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        password:
+          type: string
+          minLength: 6
+        language_code:
+          type: string
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        security_questions:
+          type: array
+          items:
+            type: integer
+          minItems: 3
+          maxItems: 3
+        security_answers:
+          type: array
+          items:
+            type: string
+          minItems: 3
+          maxItems: 3
+
+    UpdateUserRequest:
+      type: object
+      required: [user_name]
+      properties:
+        user_name:
+          type: string
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        active:
+          type: boolean
+        language_code:
+          type: string
+        group_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password, repeat_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 6
+        repeat_password:
+          type: string
+
+    PasswordChangeResult:
+      type: object
+      required: [changed]
+      properties:
+        changed:
+          type: boolean
+
+    ResetQuestionsRequest:
+      type: object
+      required: [user_name]
+      properties:
+        user_name:
+          type: string
+
+    SecurityQuestions:
+      type: object
+      properties:
+        question1:
+          type: string
+        question2:
+          type: string
+        question3:
+          type: string
+
+    ResetVerifyRequest:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            type: string
+          minItems: 3
+          maxItems: 3
+
+    ResetVerifyResult:
+      type: object
+      required: [verified]
+      properties:
+        verified:
+          type: boolean
+
+    ResetCompleteResult:
+      type: object
+      required: [reset]
+      properties:
+        reset:
+          type: boolean
+        temporary_password_emailed:
+          type: boolean
+
+    CreateGroupRequest:
+      type: object
+      required: [group_name, group_type]
+      properties:
+        group_name:
+          type: string
+        group_type:
+          $ref: "#/components/schemas/GroupType"
+
+    CreatePermissionRequest:
+      type: object
+      required: [permission_name]
+      properties:
+        permission_name:
+          type: string

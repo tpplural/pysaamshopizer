@@ -1,0 +1,701 @@
+openapi: "3.1.0"
+info:
+  title: Content / CMS Service API
+  version: "1.0.0"
+  description: |
+    API contract for content-cms (MS-11).
+    Generated from the SAAM specification.
+    This is the SINGLE SOURCE OF TRUTH for field names, paths, and response shapes.
+    Both test suites and code generators MUST reference this file.
+
+    Ownership (BV-5): this service owns the CMS content rows (content / content_description)
+    AND the binary object store (bytes for static files, images, logos, product images).
+    MS-03 (store logo) and MS-04 (product images) delegate byte storage here.
+
+    Shared-convention reconciliation (2026-09-19 human signal) applied: fields are snake_case
+    (Concern A); tenant/store headers, pagination, and the error response reference
+    spec/shared/common-schemas.yaml (Concerns B/C/E). Store-scoped file operations keep their
+    {store_code} path params. File-name lists use {items} with a file_type discriminator (Concern D).
+
+servers:
+  - url: http://localhost:{port}/api/v1/content
+    variables:
+      port:
+        default: "8011"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+x-global-headers:
+  # Concern B: content-cms is store-scoped — TenantHeader + StoreHeader (both required). It ALSO uses
+  # {storeCode} path params for store-scoped file ops (kept). Header set defined once in shared schemas.
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this tenant"
+    testValue: "test-tenant-001"
+  - name: x-store-id
+    required: true
+    description: "Store-level isolation within a tenant (authoring, file, and store-scoped operations)"
+    testValue: "test-store-001"
+
+paths:
+  /pages:
+    get:
+      operationId: listContentPages
+      summary: List the store's content pages (ordered, language-aware)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: language_code
+          in: query
+          schema:
+            type: string
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    post:
+      operationId: createContentPage
+      summary: Create a content page (forced Page kind)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContentRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Content"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /pages/{contentId}:
+    get:
+      operationId: getContentPage
+      summary: Get a content page for editing (store + type guarded)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/ContentIdPath"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Content"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    put:
+      operationId: updateContentPage
+      summary: Update a content page and its descriptions
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/ContentIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateContentRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Content"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    delete:
+      operationId: deleteContentPage
+      summary: Delete a content page (cascade descriptions)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/ContentIdPath"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "401":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /boxes:
+    get:
+      operationId: listContentBoxes
+      summary: List the store's content boxes (ordered, language-aware)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: language_code
+          in: query
+          schema:
+            type: string
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentListResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    post:
+      operationId: createContentBox
+      summary: Create a content box (forced Box kind, optional position)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContentRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Content"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /code-available:
+    get:
+      operationId: checkContentCodeAvailable
+      summary: Check content-code availability (create/edit aware)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: content_id
+          in: query
+          description: When editing, the id of the content being edited
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Availability result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CodeAvailabilityResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /landing:
+    put:
+      operationId: authorLandingContent
+      summary: Author the store landing section (reserved code)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LandingContentRequest"
+      responses:
+        "200":
+          description: Landing content saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Content"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /storefront/landing:
+    get:
+      operationId: getStorefrontLanding
+      summary: Storefront landing content (template-suffixed view)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: language_code
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorefrontContentResponse"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /storefront/pages/{friendlyUrl}:
+    get:
+      operationId: getStorefrontPageByUrl
+      summary: Storefront page by friendly URL (visible only)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: friendlyUrl
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: language_code
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorefrontContentResponse"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /stores/{storeCode}/files:
+    get:
+      operationId: listStaticFiles
+      summary: List a store's static file names
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileNameListResponse"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    post:
+      operationId: uploadStaticFiles
+      summary: Upload static files (batch)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/FileUploadRequest"
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileUploadResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /stores/{storeCode}/files/{fileName}:
+    delete:
+      operationId: removeStaticFile
+      summary: Remove a static file
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /stores/{storeCode}/images:
+    get:
+      operationId: listImages
+      summary: List a store's image names
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+        - name: file_type
+          in: query
+          description: Image category (Image, Product, ProductLarge, Property, Manufacturer)
+          schema:
+            $ref: "#/components/schemas/FileContentType"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileNameListResponse"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    post:
+      operationId: uploadImages
+      summary: Upload images (batch)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/FileUploadRequest"
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileUploadResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /stores/{storeCode}/logo:
+    post:
+      operationId: storeStoreLogo
+      summary: Store a store logo (inbound from MS-03)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/LogoUploadRequest"
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileUploadResponse"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    delete:
+      operationId: removeStoreLogo
+      summary: Remove a store logo (inbound from MS-03)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/StoreCodePath"
+        - name: file_name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+components:
+  parameters:
+    # Path params. URL path-template names {contentId} / {storeCode} / {fileName} / {friendlyUrl} kept.
+    ContentIdPath:
+      name: contentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    StoreCodePath:
+      name: storeCode
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    ContentType:
+      type: string
+      enum: [Box, Page, Section]
+
+    ContentPosition:
+      type: string
+      enum: [Left, Right]
+
+    FileContentType:
+      type: string
+      enum: [StaticFile, Image, Logo, Product, ProductLarge, Property, Manufacturer, ProductDigital]
+
+    ContentDescription:
+      type: object
+      required: [language_code, name]
+      properties:
+        language_code:
+          type: string
+          description: Canonical store language code (BR-CMS-012)
+        name:
+          type: string
+          maxLength: 120
+          description: Required localized name (BR-CMS-011)
+        title:
+          type: string
+        body:
+          type: string
+          description: Rich-text body (BR-CMS-011)
+        friendly_url:
+          type: string
+          maxLength: 120
+          description: Storefront friendly URL slug (BR-CMS-016)
+        meta_title:
+          type: string
+        meta_keywords:
+          type: string
+        meta_description:
+          type: string
+
+    Content:
+      type: object
+      required: [id, code, content_type, visible, sort_order]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          maxLength: 100
+          description: Store-unique business key (BR-CMS-001)
+        content_type:
+          $ref: "#/components/schemas/ContentType"
+        position:
+          $ref: "#/components/schemas/ContentPosition"
+        visible:
+          type: boolean
+          description: Sole publish flag (BR-CMS-008)
+        sort_order:
+          type: integer
+          default: 0
+          description: Ascending display order (BR-CMS-007)
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentDescription"
+
+    CreateContentRequest:
+      type: object
+      required: [code, descriptions]
+      properties:
+        code:
+          type: string
+          maxLength: 100
+        content_type:
+          $ref: "#/components/schemas/ContentType"
+        position:
+          $ref: "#/components/schemas/ContentPosition"
+        visible:
+          type: boolean
+          default: false
+        sort_order:
+          type: integer
+          default: 0
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentDescription"
+
+    UpdateContentRequest:
+      type: object
+      required: [descriptions]
+      properties:
+        position:
+          $ref: "#/components/schemas/ContentPosition"
+        visible:
+          type: boolean
+        sort_order:
+          type: integer
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentDescription"
+
+    LandingContentRequest:
+      type: object
+      required: [descriptions]
+      properties:
+        visible:
+          type: boolean
+          default: true
+        descriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentDescription"
+
+    CodeAvailabilityResponse:
+      type: object
+      required: [code, available]
+      properties:
+        code:
+          type: string
+        available:
+          type: boolean
+        reason:
+          type: string
+
+    StorefrontContentResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        view:
+          type: string
+          description: Template-suffixed view name (BR-CMS-023)
+        name:
+          type: string
+        body:
+          type: string
+        meta_title:
+          type: string
+        meta_keywords:
+          type: string
+        meta_description:
+          type: string
+        friendly_url:
+          type: string
+
+    ContentListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Content"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+    FileNameListResponse:
+      type: object
+      properties:
+        # Concern D: list field is {items}; file_type discriminator kept.
+        items:
+          type: array
+          items:
+            type: string
+        file_type:
+          $ref: "#/components/schemas/FileContentType"
+
+    FileUploadRequest:
+      type: object
+      required: [files]
+      properties:
+        file_type:
+          $ref: "#/components/schemas/FileContentType"
+        files:
+          type: array
+          items:
+            type: string
+            format: binary
+
+    LogoUploadRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+
+    FileUploadResponse:
+      type: object
+      properties:
+        stored:
+          type: array
+          items:
+            type: string
+        file_type:
+          $ref: "#/components/schemas/FileContentType"

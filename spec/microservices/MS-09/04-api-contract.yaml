@@ -1,0 +1,1008 @@
+openapi: "3.1.0"
+info:
+  title: Order Service API
+  version: "1.0.0"
+  description: |
+    API contract for MS-09 order-service (Shopizer 2.0.1 modernization).
+    Order aggregate, order-products, the authoritative order-totals pipeline, order status lifecycle,
+    and checkout / order-placement orchestration.
+    BV-1/ADR-001: order OWNS the total — tax (MS-07) and shipping (MS-08) are synchronous stateless reads
+    folded into the owned computation.
+    BV-2/ADR-003: order CONSUMES payment.captured / payment.refunded (idempotent on transaction_id) —
+    NO cross-service order write from payment.
+    D-08: checkout is a saga (charge -> persist -> publish order.placed) with idempotency + reconciliation,
+    NOT 2PC.
+    SINGLE SOURCE OF TRUTH for field names, paths, and response shapes.
+
+    Shared-convention reconciliation (2026-09-19 human signal) applied: fields are snake_case (Concern A);
+    tenant/store headers, pagination, and the error response reference spec/shared/common-schemas.yaml
+    (Concerns B/C/E); x-store-id is now REQUIRED (Concern B fix); customer_id and store_id are string/uuid
+    system-wide (Concern F — order's customer_id was int64, store_id was untyped string).
+
+servers:
+  - url: http://localhost:{port}/api/v1/orders
+    variables:
+      port:
+        default: "8009"
+
+x-naming-conventions:
+  fieldNaming: snake_case
+  endpointNaming: kebab-case
+  headerNaming: kebab-case
+  enumValues: PascalCase
+  queryParams: snake_case
+
+x-global-headers:
+  # Concern B: order is store-scoped — TenantHeader + StoreHeader (both required). x-store-id made
+  # REQUIRED (was optional). Header set defined once in spec/shared/common-schemas.yaml.
+  - name: x-tenant-id
+    required: true
+    description: "Multi-tenancy isolation — all queries scoped to this tenant"
+    testValue: "test-tenant-001"
+  - name: x-store-id
+    required: true
+    description: "Store isolation within a tenant (required on order/checkout operations — Concern B fix)"
+    testValue: "test-store-001"
+
+paths:
+  /calculate-total:
+    post:
+      operationId: calculateOrderTotal
+      summary: Compute the authoritative order total (owns total; tax + shipping are sync reads)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalculateOrderTotalRequest"
+      responses:
+        "200":
+          description: Totals computed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTotalSummary"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /shipping-summary:
+    post:
+      operationId: deriveShippingSummary
+      summary: Derive the shipping summary from a selected quote option
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingSummaryRequest"
+      responses:
+        "200":
+          description: Shipping summary (or null when no option is selected)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingSummary"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /checkout-context:
+    get:
+      operationId: getCheckoutContext
+      summary: Resolve cart, payment methods and prefilled customer for checkout
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: cart_code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Checkout context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckoutContext"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /validate:
+    post:
+      operationId: validateOrderSubmission
+      summary: Validate a checkout submission (billing/delivery/payment/shipping/card)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderSubmission"
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationResult"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /payment/init/{paymentMethod}:
+    post:
+      operationId: initializePreAuthorization
+      summary: Initiate a PayPal Express pre-authorization
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: paymentMethod
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreAuthorizationRequest"
+      responses:
+        "200":
+          description: Provider approval URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreAuthorizationResponse"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /:
+    post:
+      operationId: placeOrder
+      summary: Place an order (checkout saga — charge, persist, publish order.placed)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: idempotency-key
+          in: header
+          required: true
+          schema:
+            type: string
+          description: "Checkout saga idempotency key (charge-vs-persist safety)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+      responses:
+        "201":
+          description: Order placed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    get:
+      operationId: listOrders
+      summary: List store orders with filters and paging
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: payment_module
+          in: query
+          schema:
+            type: string
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: "date_purchased:desc"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageParam"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Paged order list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderListResponse"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "400":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/BadRequest"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /integration/orders:
+    post:
+      operationId: createOrderViaIntegration
+      summary: Integration channel — create an order without payment orchestration
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationOrderRequest"
+      responses:
+        "201":
+          description: Order created (no charge)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}:
+    get:
+      operationId: getOrderById
+      summary: Fetch the full order aggregate
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: Order aggregate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+    put:
+      operationId: saveOrder
+      summary: Save/update an order (create-vs-update discriminator)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveOrderRequest"
+      responses:
+        "200":
+          description: Order updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}/status:
+    patch:
+      operationId: changeOrderStatus
+      summary: Admin status change + audit history entry
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusChangeRequest"
+      responses:
+        "200":
+          description: Status changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}/confirmation:
+    get:
+      operationId: getOrderConfirmation
+      summary: Confirmation view with cross-store ownership guard
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: Confirmation payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderConfirmation"
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}/invoice:
+    get:
+      operationId: getOrderInvoice
+      summary: Generate the order invoice (PDF)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: Invoice PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "409":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Conflict"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}/downloads:
+    get:
+      operationId: listOrderDownloads
+      summary: List an order's downloadable products
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      responses:
+        "200":
+          description: Order downloads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDownloadList"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}/downloads/{downloadId}/file:
+    get:
+      operationId: downloadOrderProductFile
+      summary: Stream a digital product file (legacy IDOR + limits preserved, flagged)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+        - name: downloadId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "403":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+  /{orderId}/refund:
+    post:
+      operationId: refundOrder
+      summary: Admin refund (delegates to payment; settlement applied via event)
+      parameters:
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/TenantHeader"
+        - $ref: "../../shared/common-schemas.yaml#/components/parameters/StoreHeader"
+        - $ref: "#/components/parameters/OrderIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefundRequest"
+      responses:
+        "202":
+          description: Refund requested (settlement returns via payment.refunded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefundAcknowledgement"
+        "422":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/UnprocessableEntity"
+        "404":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "../../shared/common-schemas.yaml#/components/responses/InternalError"
+
+components:
+  parameters:
+    # Order-specific path param. URL path-template name {orderId} kept unchanged per reconciliation scope.
+    OrderIdPath:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    OrderStatus:
+      type: string
+      enum: [Ordered, Processed, Delivered, Refunded]
+
+    PaymentType:
+      type: string
+      enum: [CreditCard, Free, Cod, MoneyOrder, Paypal]
+
+    Money:
+      type: number
+      format: double
+
+    OrderLineItem:
+      type: object
+      required: [unit_price, quantity]
+      properties:
+        sku:
+          type: string
+        product_name:
+          type: string
+        unit_price:
+          $ref: "#/components/schemas/Money"
+        quantity:
+          type: integer
+          format: int32
+
+    ShippingSummary:
+      type: object
+      properties:
+        free_shipping:
+          type: boolean
+        tax_on_shipping:
+          type: boolean
+        handling:
+          $ref: "#/components/schemas/Money"
+        shipping:
+          $ref: "#/components/schemas/Money"
+        shipping_option:
+          type: string
+        shipping_module:
+          type: string
+
+    ShippingSummaryRequest:
+      type: object
+      properties:
+        selected_shipping_option:
+          type: object
+          properties:
+            code:
+              type: string
+            option_price:
+              $ref: "#/components/schemas/Money"
+        apply_tax_on_shipping:
+          type: boolean
+        handling_fees:
+          $ref: "#/components/schemas/Money"
+        free_shipping:
+          type: boolean
+
+    OrderTotalLine:
+      type: object
+      required: [value, sort_order]
+      properties:
+        module_code:
+          type: string
+        total_type:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        value:
+          $ref: "#/components/schemas/Money"
+        sort_order:
+          type: integer
+          format: int32
+
+    OrderTotalSummary:
+      type: object
+      properties:
+        sub_total:
+          $ref: "#/components/schemas/Money"
+        tax_total:
+          $ref: "#/components/schemas/Money"
+        total:
+          type: number
+          format: double
+          description: "computed: sub_total + (free_shipping ? 0 : shipping) + handling + SUM(tax_lines)"
+        totals:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderTotalLine"
+
+    CalculateOrderTotalRequest:
+      type: object
+      properties:
+        cart_code:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineItem"
+        shipping:
+          $ref: "#/components/schemas/ShippingSummary"
+        customer:
+          $ref: "#/components/schemas/CustomerRef"
+
+    CustomerRef:
+      type: object
+      properties:
+        # Concern F: customer_id is string/uuid system-wide (was int64).
+        customer_id:
+          type: string
+          format: uuid
+        zone:
+          type: string
+        country:
+          type: string
+        state_province:
+          type: string
+
+    Address:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        country:
+          type: string
+        zone:
+          type: string
+        state_province:
+          type: string
+        phone:
+          type: string
+        postal_code:
+          type: string
+
+    PaymentInstruction:
+      type: object
+      required: [payment_type]
+      properties:
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        module_name:
+          type: string
+        number:
+          type: string
+          description: "Raw PAN — routed to payment (MS-10), NEVER persisted here"
+        holder:
+          type: string
+        cvv:
+          type: string
+        expiry_month:
+          type: integer
+          format: int32
+        expiry_year:
+          type: integer
+          format: int32
+        card_type:
+          type: string
+
+    MaskedCard:
+      type: object
+      properties:
+        masked_number:
+          type: string
+        card_type:
+          type: string
+        holder:
+          type: string
+        expires:
+          type: string
+
+    OrderSubmission:
+      type: object
+      properties:
+        billing:
+          $ref: "#/components/schemas/Address"
+        delivery:
+          $ref: "#/components/schemas/Address"
+        ship_to_billing_address:
+          type: boolean
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        payment:
+          $ref: "#/components/schemas/PaymentInstruction"
+        selected_shipping_option:
+          type: string
+
+    ValidationResult:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean
+        messages:
+          type: array
+          items:
+            type: string
+
+    CheckoutContext:
+      type: object
+      properties:
+        cart_code:
+          type: string
+        payment_methods:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              default:
+                type: boolean
+        customer:
+          type: object
+          properties:
+            billing:
+              $ref: "#/components/schemas/Address"
+            delivery:
+              $ref: "#/components/schemas/Address"
+        totals:
+          $ref: "#/components/schemas/OrderTotalSummary"
+
+    PreAuthorizationRequest:
+      type: object
+      required: [cart_code]
+      properties:
+        cart_code:
+          type: string
+        payment:
+          $ref: "#/components/schemas/PaymentInstruction"
+
+    PreAuthorizationResponse:
+      type: object
+      properties:
+        redirect_url:
+          type: string
+        token:
+          type: string
+
+    PlaceOrderRequest:
+      type: object
+      required: [payment]
+      properties:
+        cart_code:
+          type: string
+        idempotency_key:
+          type: string
+        ship_to_billing_address:
+          type: boolean
+        customer:
+          type: object
+          properties:
+            # Concern F: customer_id is string/uuid system-wide (was int64).
+            customer_id:
+              type: string
+              format: uuid
+            billing:
+              $ref: "#/components/schemas/Address"
+            delivery:
+              $ref: "#/components/schemas/Address"
+        payment:
+          $ref: "#/components/schemas/PaymentInstruction"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineItem"
+
+    IntegrationOrderRequest:
+      type: object
+      properties:
+        customer:
+          $ref: "#/components/schemas/CustomerRef"
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineItem"
+
+    SaveOrderRequest:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        billing:
+          $ref: "#/components/schemas/Address"
+        delivery:
+          $ref: "#/components/schemas/Address"
+        customer_email:
+          type: string
+        date_purchased:
+          type: string
+          format: date
+
+    StatusChangeRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        comment:
+          type: string
+        customer_notified:
+          type: boolean
+        customer_email_address:
+          type: string
+
+    RefundRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          format: double
+
+    RefundAcknowledgement:
+      type: object
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        refund_requested:
+          type: number
+          format: double
+        status:
+          type: string
+
+    OrderProductDownload:
+      type: object
+      properties:
+        download_id:
+          type: string
+        filename:
+          type: string
+        max_days:
+          type: integer
+          format: int32
+        download_count:
+          type: integer
+          format: int32
+
+    OrderDownloadList:
+      type: object
+      properties:
+        has_downloads:
+          type: boolean
+        downloads:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderProductDownload"
+
+    OrderProduct:
+      type: object
+      properties:
+        order_product_id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        product_name:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+        one_time_charge:
+          $ref: "#/components/schemas/Money"
+
+    OrderStatusHistoryEntry:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        date:
+          type: string
+          format: date-time
+        customer_notified:
+          type: boolean
+        comment:
+          type: string
+
+    Order:
+      type: object
+      required: [order_id, status]
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        total:
+          type: number
+          format: double
+          description: "computed: SUM of order total component lines (INV-ORD-002)"
+        currency:
+          type: string
+        # Concern F: customer_id is string/uuid system-wide (was int64).
+        customer_id:
+          type: string
+          format: uuid
+        customer_email:
+          type: string
+        # Concern F: store_id is string/uuid system-wide (was untyped string).
+        store_id:
+          type: string
+          format: uuid
+        date_purchased:
+          type: string
+          format: date
+        payment_type:
+          $ref: "#/components/schemas/PaymentType"
+        payment:
+          $ref: "#/components/schemas/MaskedCard"
+        billing:
+          $ref: "#/components/schemas/Address"
+        delivery:
+          $ref: "#/components/schemas/Address"
+        # totals / products / status_history are embedded arrays in the Order aggregate — kept (Concern D).
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderProduct"
+        totals:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderTotalLine"
+        status_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderStatusHistoryEntry"
+
+    OrderConfirmation:
+      type: object
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        just_confirmed:
+          type: boolean
+        total:
+          type: number
+          format: double
+        downloads:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderProductDownload"
+
+    OrderSummaryItem:
+      type: object
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        total:
+          type: number
+          format: double
+        date_purchased:
+          type: string
+          format: date
+        customer_email:
+          type: string
+
+    OrderListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderSummaryItem"
+        pagination:
+          $ref: "../../shared/common-schemas.yaml#/components/schemas/PaginationInfo"
+
+  responses:
+    # Order-specific error responses NOT in the shared set. Each references the shared ErrorResponse
+    # schema (Concern E — shared base referenced, not forked).
+    Gone:
+      description: Cart/checkout session expired
+      content:
+        application/json:
+          schema:
+            $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"
+    PaymentRequired:
+      description: Payment charge failed
+      content:
+        application/json:
+          schema:
+            $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"
+    NotImplemented:
+      description: Operation not supported for this input shape
+      content:
+        application/json:
+          schema:
+            $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Dependency unavailable (e.g. store not found)
+      content:
+        application/json:
+          schema:
+            $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"
+    UpstreamError:
+      description: Upstream calculator/gateway error (tax/shipping/payment)
+      content:
+        application/json:
+          schema:
+            $ref: "../../shared/common-schemas.yaml#/components/schemas/ErrorResponse"
